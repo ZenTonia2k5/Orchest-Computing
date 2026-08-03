@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchest Computing - Universal Swarm MLOps App</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Top App Navigation & Mode Switcher -->
+        <header class="app-header glass-panel">
+            <div class="brand">
+                <div class="brand-logo">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h2>ORCHEST</h2>
+                    <span>Edge Swarm MLOps</span>
+                </div>
+            </div>
+
+            <!-- 2 PROMINENT BUTTONS: HOST OR WORKER MODE -->
+            <div class="mode-switcher-group">
+                <button class="mode-btn active" id="btn-mode-host">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    <span>👑 Host Mode (Master Orchestrator)</span>
+                </button>
+                <button class="mode-btn" id="btn-mode-worker">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                    <span>⚡ Worker Mode (Edge Node)</span>
+                </button>
+            </div>
+
+            <div class="header-status">
+                <span class="status-badge" id="header-status-badge">Scanning LAN...</span>
+            </div>
+        </header>
+
+        <!-- MAIN VIEW: HOST MODE VIEW -->
+        <main class="app-view active" id="view-host">
+            <div class="host-controls glass-panel">
+                <div class="control-row">
+                    <!-- MODEL OPTION SELECTOR -->
+                    <div class="control-item">
+                        <label for="model-selector">AI Model Option:</label>
+                        <select id="model-selector" class="custom-select">
+                            <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast)</option>
+                            <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm)</option>
+                            <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality)</option>
+                            <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm)</option>
+                        </select>
+                    </div>
+
+                    <!-- PARTITION STRATEGY MODE -->
+                    <div class="control-item">
+                        <label>Partition Strategy:</label>
+                        <div class="strategy-toggle-group">
+                            <button class="strategy-btn active" id="strategy-auto" data-mode="auto">
+                                <span>🤖 Auto DP Solver</span>
+                            </button>
+                            <button class="strategy-btn" id="strategy-ratio" data-mode="ratio">
+                                <span>✂️ Ratio Cutting</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="control-item action-item">
+                        <button class="btn btn-primary" id="btn-run-dp">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            <span id="btn-partition-label">Apply Partition</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- RATIO CUTTING CUSTOMIZATION PANEL -->
+                <div class="ratio-panel" id="ratio-config-panel" style="display: none;">
+                    <div class="ratio-header">
+                        <h4>✂️ Custom Ratio Work Distribution</h4>
+                        <div class="ratio-presets">
+                            <span class="preset-label">Presets:</span>
+                            <button class="btn-preset" data-preset="50-50">50 : 50 (Equal)</button>
+                            <button class="btn-preset" data-preset="70-30">70 : 30 (Host Heavy)</button>
+                            <button class="btn-preset" data-preset="30-70">30 : 70 (Worker Heavy)</button>
+                        </div>
+                    </div>
+
+                    <div class="ratio-sliders-container" id="node-ratio-sliders">
+                        <!-- Dynamically populated ratio sliders per node -->
+                    </div>
+
+                    <div class="distribution-bar-wrapper">
+                        <div class="bar-header">
+                            <span>Layer Allocation Preview:</span>
+                            <span id="distribution-text-preview">100% total</span>
+                        </div>
+                        <div class="distribution-bar" id="ratio-distribution-bar">
+                            <!-- Visual distribution segments -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VISUAL EXECUTION MAP (LIVE SWARM DATA FLOW) -->
+            <div class="visual-map-card glass-panel">
+                <div class="visual-map-header">
+                    <div class="visual-title">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+                        <h3>Live Swarm Pipeline Execution Map</h3>
+                    </div>
+                    <div class="pipeline-status-badge" id="pipeline-status-badge">
+                        <span class="status-pulse"></span>
+                        <span id="pipeline-status-text">Pipeline Ready</span>
+                    </div>
+                </div>
+
+                <div class="visual-pipeline-canvas" id="swarm-visual-map">
+                    <!-- Dynamic SVG & Node Stage Flow Cards rendered here -->
+                </div>
+            </div>
+
+            <!-- 2-COLUMN LAYOUT: SWARM CLUSTER & CHAT BOX -->
+            <div class="host-grid">
+                <!-- LAN Swarm Topology & Partition Flow -->
+                <div class="swarm-panel glass-panel">
+                    <div class="panel-header">
+                        <h3>LAN Swarm Topology (<span id="host-node-count">0</span> Nodes)</h3>
+                        <span class="sub-text">Dynamic Allocation Breakdown</span>
+                    </div>
+
+                    <div class="nodes-list" id="host-nodes-list">
+                        <!-- Rendered Node Cards -->
+                    </div>
+
+                    <h4 class="sub-section-title">Model Layer Slicing Allocation</h4>
+                    <div class="slice-flow-list" id="host-slice-flow">
+                        <!-- Rendered Slice Pipeline -->
+                    </div>
+                </div>
+
+                <!-- CHAT BOX -->
+                <div class="chat-panel glass-panel">
+                    <div class="chat-header">
+                        <div class="chat-title-group">
+                            <span class="pulse-dot"></span>
+                            <span id="chat-active-model-title">Qwen2.5-0.5B Swarm Chat</span>
+                        </div>
+                        <span class="chat-speed-tag" id="chat-speed">Stream Active</span>
+                    </div>
+
+                    <div class="chat-box-messages" id="chat-messages-container">
+                        <div class="chat-msg system">
+                            👋 Welcome to <strong>Orchest Computing</strong>! Type a prompt in the chat box below to perform token-by-token swarm inference across connected LAN edge devices.
+                        </div>
+                    </div>
+
+                    <div class="chat-input-row">
+                        <input type="text" id="chat-input-field" placeholder="Ask a question or enter a prompt for Swarm LLM..." autocomplete="off">
+                        <button class="btn btn-primary btn-chat-send" id="btn-chat-send">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                            <span>Send</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- MAIN VIEW: WORKER MODE VIEW -->
+        <main class="app-view" id="view-worker">
+            <div class="worker-card glass-panel">
+                <div class="worker-header">
+                    <div class="worker-badge online">⚡ Worker Node Active</div>
+                    <span style="color: var(--text-muted)">Broadcasting UDP Beacon on Port 59001</span>
+                </div>
+
+                <div class="worker-details-grid">
+                    <div class="worker-info-box">
+                        <span class="box-label">Node Identifier</span>
+                        <div class="box-val" id="worker-node-id">--</div>
+                    </div>
+                    <div class="worker-info-box">
+                        <span class="box-label">IP Address</span>
+                        <div class="box-val" id="worker-ip">--</div>
+                    </div>
+                    <div class="worker-info-box">
+                        <span class="box-label">TCP Streaming Port</span>
+                        <div class="box-val" id="worker-tcp-port">5555</div>
+                    </div>
+                    <div class="worker-info-box">
+                        <span class="box-label">Hardware Device</span>
+                        <div class="box-val" id="worker-device">--</div>
+                    </div>
+                </div>
+
+                <h3 class="sub-section-title">Local Machine Hardware Capacity</h3>
+                <div class="metric-progress-group">
+                    <div class="metric-header">
+                        <span>Available Memory (VRAM / RAM)</span>
+                        <span id="worker-mem-text">-- MB</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="worker-mem-bar"></div>
+                    </div>
+                </div>
+
+                <div class="metric-progress-group">
+                    <div class="metric-header">
+                        <span>CPU Utilization</span>
+                        <span id="worker-cpu-text">-- %</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="worker-cpu-bar"></div>
+                    </div>
+                </div>
+
+                <div class="worker-slice-status-box">
+                    <h4>Assigned Model Layer Slice</h4>
+                    <p id="worker-slice-text" style="color: var(--text-muted); margin-top: 6px;">Listening for Host Orchestrator model slice dispatch...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
