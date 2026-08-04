@@ -1,6 +1,0 @@
-flask
-flask-cors
-psutil
-transformers
-numpy
-torch
