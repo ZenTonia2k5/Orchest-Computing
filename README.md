@@ -1,6 +1,8 @@
-# Orchest Computing - Decentralized Swarm MLOps Orchestrator
+# Orchest Computing - Orchestrator suy luận phân tán cho cụm thiết bị biên dị chủng
 
-Orchest Computing is a decentralized MLOps orchestrator that allows heterogeneous machines (Windows, Mac, Linux) in the same Local Area Network (LAN) to dynamically cluster, profile resources, slice model layers using Dynamic Programming, and run collaborative swarm inference.
+Orchest Computing is a decentralized orchestrator that allows heterogeneous machines (Windows, Mac, Linux) in the same Local Area Network (LAN) to dynamically cluster, profile resources, slice model layers using Dynamic Programming, and run collaborative swarm inference.
+
+<img width="665" height="582" alt="Screenshot 2026-08-04 at 10 34 44" src="https://github.com/user-attachments/assets/96d7163e-04de-474d-a008-9729258e6ce2" />
 
 ---
 
