@@ -30,21 +30,15 @@ class HostOrchestrator:
         node_id: Optional[str] = None,
         discovery_port: int = 59001,
         secret_key: Optional[bytes] = None,
-<<<<<<< Updated upstream
         config_path: str = "cluster_nodes_config.json",
-    ):
-        self.node_id = node_id or "host_master"
-        self.secret_key = secret_key
-        self.config_path = config_path
-=======
         transport: str = "raw_tcp",
         allowlist: Optional[List[str]] = None,
     ):
         self.node_id = node_id or "host_master"
         self.secret_key = secret_key
+        self.config_path = config_path
         self.transport_type = transport
         self.allowlist = allowlist or []
->>>>>>> Stashed changes
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.fault_monitor = FaultToleranceMonitor(heartbeat_timeout_sec=8.0)
         self.partitioner = DynamicPartitioner()
@@ -56,7 +50,16 @@ class HostOrchestrator:
         self.active_model_name: Optional[str] = None
         self.tokenizer: Optional[Any] = None
 
-<<<<<<< Updated upstream
+        # Connect failure callback to prune dead worker nodes
+        def _on_node_failed(dead_node_id: str):
+            if dead_node_id in self.worker_nodes:
+                del self.worker_nodes[dead_node_id]
+            if dead_node_id in self.worker_ports:
+                del self.worker_ports[dead_node_id]
+            logger.warning(f"Host pruned failed worker [{dead_node_id}] from active topology.")
+
+        self.fault_monitor.on_node_failed_cb = _on_node_failed
+
     def _load_node_configs(self) -> Dict[str, Dict[str, Any]]:
         if os.path.exists(self.config_path):
             try:
@@ -106,17 +109,6 @@ class HostOrchestrator:
             self._save_node_configs()
             removed = True
         return removed
-=======
-        # Connect failure callback to prune dead worker nodes
-        def _on_node_failed(dead_node_id: str):
-            if dead_node_id in self.worker_nodes:
-                del self.worker_nodes[dead_node_id]
-            if dead_node_id in self.worker_ports:
-                del self.worker_ports[dead_node_id]
-            logger.warning(f"Host pruned failed worker [{dead_node_id}] from active topology.")
-
-        self.fault_monitor.on_node_failed_cb = _on_node_failed
->>>>>>> Stashed changes
 
     def start_discovery(self):
         """
@@ -124,16 +116,6 @@ class HostOrchestrator:
         """
         def _on_beacon(beacon: NodeBeacon):
             node_metrics = beacon.node_metrics
-<<<<<<< Updated upstream
-            # Attach saved config (alias, enabled)
-            cfg = self.node_configs.get(node_metrics.node_id, {})
-            setattr(node_metrics, "alias", cfg.get("alias", node_metrics.node_id))
-            setattr(node_metrics, "enabled", cfg.get("enabled", True))
-            setattr(node_metrics, "tcp_port", beacon.tcp_port)
-
-            self.worker_nodes[node_metrics.node_id] = node_metrics
-            self.worker_ports[node_metrics.node_id] = beacon.tcp_port
-=======
             node_id = node_metrics.node_id
 
             # Allowlist security check
@@ -143,11 +125,14 @@ class HostOrchestrator:
                 )
                 return
 
-            self.worker_nodes[node_id] = node_metrics
-            # Store worker TCP port on metric object for convenience
+            # Attach saved config (alias, enabled)
+            cfg = self.node_configs.get(node_id, {})
+            setattr(node_metrics, "alias", cfg.get("alias", node_id))
+            setattr(node_metrics, "enabled", cfg.get("enabled", True))
             setattr(node_metrics, "tcp_port", beacon.tcp_port)
+
+            self.worker_nodes[node_id] = node_metrics
             self.worker_ports[node_id] = beacon.tcp_port
->>>>>>> Stashed changes
             self.fault_monitor.update_heartbeat(node_metrics)
             logger.info(
                 f"Discovered Worker Node: {node_id} ({node_metrics.ip_address}) - {node_metrics.os_system} - RAM:{node_metrics.ram_available_mb}MB"
@@ -157,9 +142,6 @@ class HostOrchestrator:
         self.discovery_service.start_beacon_listener()
         logger.info("Host Orchestrator discovery listener started.")
 
-<<<<<<< Updated upstream
-    def get_cluster_topology(self, include_disabled: bool = True) -> List[NodeMetrics]:
-=======
         # Broadcast Host configuration parameters
         import socket
         import json
@@ -192,8 +174,7 @@ class HostOrchestrator:
         threading.Thread(target=_host_beacon_loop, daemon=True).start()
         logger.info(f"Host Config Beacon broadcast started ({self.transport_type}).")
 
-    def get_cluster_topology(self) -> List[NodeMetrics]:
->>>>>>> Stashed changes
+    def get_cluster_topology(self, include_disabled: bool = True) -> List[NodeMetrics]:
         # Perform health check prune before returning
         self.fault_monitor.check_node_failures()
         all_nodes = list(self.worker_nodes.values())

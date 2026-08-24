@@ -88,13 +88,16 @@ def startup_event():
     except Exception as e:
         print(f"Local worker start notice: {e}")
 
-    cfg = MODEL_CONFIGS.get("Qwen/Qwen2.5-0.5B-Instruct", {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
-    host_orchestrator.plan_model_slicing(
-        "Qwen/Qwen2.5-0.5B-Instruct",
-        num_layers=cfg["num_layers"],
-        hidden_size=cfg["hidden_size"],
-        intermediate_size=cfg["intermediate_size"],
-    )
+    try:
+        cfg = MODEL_CONFIGS.get("Qwen/Qwen2.5-0.5B-Instruct", {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+        host_orchestrator.plan_model_slicing(
+            "Qwen/Qwen2.5-0.5B-Instruct",
+            num_layers=cfg["num_layers"],
+            hidden_size=cfg["hidden_size"],
+            intermediate_size=cfg["intermediate_size"],
+        )
+    except Exception as e:
+        logger.warning(f"Initial model slicing notice: {e}")
 
 
 @app.on_event("shutdown")

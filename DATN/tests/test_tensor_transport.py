@@ -134,6 +134,8 @@ def test_tensor_transport_zmq_transmission():
 
 
 def test_tensor_transport_grpc_transmission():
+    import pytest
+    pytest.importorskip("grpc")
     received_packets = []
 
     def _on_recv(msg_type, meta, tensor):

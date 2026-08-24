@@ -31,21 +31,15 @@ class WorkerNode:
         tcp_port: int = 5555,
         discovery_port: int = 59001,
         secret_key: Optional[bytes] = None,
-<<<<<<< Updated upstream
         auto_accept: bool = True,
-=======
         transport_type: str = "raw_tcp",
->>>>>>> Stashed changes
     ):
         self.profiler = NodeProfiler(node_id=node_id)
         self.tcp_port = tcp_port
         self.discovery_port = discovery_port
         self.secret_key = secret_key
-<<<<<<< Updated upstream
         self.auto_accept = auto_accept
-=======
         self.transport_type = transport_type
->>>>>>> Stashed changes
 
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.transport_server = TensorTransportServer(

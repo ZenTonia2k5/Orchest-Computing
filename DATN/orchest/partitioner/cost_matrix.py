@@ -78,9 +78,10 @@ class PartitionCostCalculator:
         total_flops_per_token = sum(l.flops_per_token for l in sub_layers)
 
         # Estimate dynamic activation buffer and KV Cache memory headroom
+        hidden_sz = sub_layers[0].output_shape[2] if (sub_layers and len(sub_layers[0].output_shape) > 2) else 2048
         kv_cache_headroom_mb = cls.estimate_kv_cache_mb(
             num_layers=num_sub_layers,
-            hidden_size=2048,
+            hidden_size=hidden_sz,
             max_seq_len=min(prompt_len + 128, 4096),
         )
         total_required_mem_mb = total_weight_mb + kv_cache_headroom_mb
