@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package orchest;
+
+service TensorService {
+  rpc SendPacket (PacketRequest) returns (PacketResponse);
+}
+
+message PacketRequest {
+  bytes data = 1;
+}
+
+message PacketResponse {
+  bytes data = 1;
+}

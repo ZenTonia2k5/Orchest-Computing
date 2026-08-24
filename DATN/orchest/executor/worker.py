@@ -31,17 +31,25 @@ class WorkerNode:
         tcp_port: int = 5555,
         discovery_port: int = 59001,
         secret_key: Optional[bytes] = None,
+<<<<<<< Updated upstream
         auto_accept: bool = True,
+=======
+        transport_type: str = "raw_tcp",
+>>>>>>> Stashed changes
     ):
         self.profiler = NodeProfiler(node_id=node_id)
         self.tcp_port = tcp_port
         self.discovery_port = discovery_port
         self.secret_key = secret_key
+<<<<<<< Updated upstream
         self.auto_accept = auto_accept
+=======
+        self.transport_type = transport_type
+>>>>>>> Stashed changes
 
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.transport_server = TensorTransportServer(
-            host="0.0.0.0", port=tcp_port, secret_key=secret_key
+            host="0.0.0.0", port=tcp_port, secret_key=secret_key, transport_type=transport_type
         )
 
         self.loaded_model: Optional[nn.Module] = None
@@ -60,6 +68,15 @@ class WorkerNode:
         self.transport_server.on_tensor_received_cb = self._on_message_received
         self.transport_server.start()
 
+        # Start listening for Host Beacons to auto-align transport mode
+        def _on_host_beacon(payload):
+            new_transport = payload.get("transport", "raw_tcp")
+            self.switch_transport(new_transport)
+            
+        self.discovery_service.on_host_beacon_received = _on_host_beacon
+        self.discovery_service.start_beacon_listener()
+        logger.info("UDP Discovery beacon listener active (listening for Host configurations).")
+
         # Start UDP Auto-Discovery Beacon Sender
         def beacon_provider():
             metrics = self.profiler.profile()
@@ -72,6 +89,23 @@ class WorkerNode:
 
         self.discovery_service.start_beacon_sender(beacon_provider, interval_sec=2.0)
         logger.info("UDP Discovery Beacon broadcast started.")
+
+    def switch_transport(self, new_transport: str):
+        if self.transport_type == new_transport:
+            return
+
+        logger.info(f"Host transport protocol change detected: {new_transport}. Re-binding server from {self.transport_type}...")
+        try:
+            self.transport_server.stop()
+            self.transport_type = new_transport
+            self.transport_server = TensorTransportServer(
+                host="0.0.0.0", port=self.tcp_port, secret_key=self.secret_key, transport_type=new_transport
+            )
+            self.transport_server.on_tensor_received_cb = self._on_message_received
+            self.transport_server.start()
+            logger.info(f"Worker transport server successfully re-bound to: {new_transport}")
+        except Exception as e:
+            logger.error(f"Failed to switch worker transport: {e}")
 
     def stop(self):
         self.discovery_service.stop()
@@ -272,6 +306,7 @@ class WorkerNode:
                 meta=meta,
                 tensor=out_tensor,
                 secret_key=self.secret_key,
+                transport_type=self.transport_type,
             )
         else:
             logger.info("Pipeline Final Stage completed on this node.")

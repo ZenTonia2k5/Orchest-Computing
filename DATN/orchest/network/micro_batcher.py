@@ -54,9 +54,13 @@ class MicroBatcher:
         def _worker_loop():
             while self._running:
                 try:
-                    item: MicroBatchItem = self.input_queue.get(timeout=0.1)
+                    item: Optional[MicroBatchItem] = self.input_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
+
+                if item is None:  # Sentinel shutdown item
+                    self.input_queue.task_done()
+                    break
 
                 try:
                     out_tensor = compute_fn(item)
@@ -68,7 +72,7 @@ class MicroBatcher:
                         meta=item.meta,
                     )
                     self.output_queue.put(out_item)
-                except Exception as e:
+                except Exception:
                     pass
                 finally:
                     self.input_queue.task_done()
@@ -78,3 +82,8 @@ class MicroBatcher:
 
     def stop(self):
         self._running = False
+        try:
+            self.input_queue.put_nowait(None)
+        except Exception:
+            pass
+

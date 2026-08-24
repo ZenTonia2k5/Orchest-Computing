@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, Any, Union
+from typing import List, Tuple, Optional, Any, Union, Dict
 
 import torch
 import torch.nn as nn
@@ -38,12 +38,13 @@ class ModelSliceModule(nn.Module):
         input_tensor: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> torch.Tensor:
         x = input_tensor
 
-        # Stage 0: Embed token IDs to hidden states
+        # Stage 0: Embed token IDs to hidden states if token IDs were passed
         if self.is_first_stage and self.embed_tokens is not None:
-            if x.dtype == torch.long or x.dim() == 2:
+            if x.dtype in (torch.long, torch.int32, torch.int64) or (x.dim() == 2 and x.dtype != torch.float32 and x.dtype != torch.float16):
                 x = self.embed_tokens(x)
 
         # Forward pass through sub-slice of transformer layers
@@ -54,16 +55,20 @@ class ModelSliceModule(nn.Module):
                     x,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
+                    **kwargs,
                 )
             except TypeError:
-                layer_outputs = layer(x)
+                try:
+                    layer_outputs = layer(x, **kwargs)
+                except TypeError:
+                    layer_outputs = layer(x)
 
             if isinstance(layer_outputs, tuple):
                 x = layer_outputs[0]
             else:
                 x = layer_outputs
 
-        # Final Stage: Apply final LayerNorm and LM Head
+        # Final Stage: Apply final LayerNorm/RMSNorm and LM Head
         if self.is_last_stage:
             if self.norm is not None:
                 x = self.norm(x)
@@ -76,22 +81,40 @@ class ModelSliceModule(nn.Module):
 class AutoModelSlicer:
     """
     Extracts transformer layers from Hugging Face Causal LM models.
+    Supports Qwen, LLaMA, Mistral, Gemma, GPT-2, GPT-NeoX, Falcon, and standard architectures.
     """
 
     @staticmethod
-    def get_transformer_layers(model: PreTrainedModel) -> Tuple[nn.ModuleList, nn.Module, nn.Module, nn.Module]:
+    def get_transformer_layers(model: PreTrainedModel) -> Tuple[nn.ModuleList, Optional[nn.Module], Optional[nn.Module], Optional[nn.Module]]:
         """
-        Locates layers, token embeddings, final norm, and lm_head across common HF architectures (Qwen, Llama, GPT-2, Mistral).
+        Locates layers, token embeddings, final norm, and lm_head across common HF architectures.
         """
-        base_model = getattr(model, "model", None) or getattr(model, "transformer", None) or model
+        base_model = (
+            getattr(model, "model", None)
+            or getattr(model, "transformer", None)
+            or getattr(model, "gpt_neox", None)
+            or model
+        )
 
-        layers = getattr(base_model, "layers", None) or getattr(base_model, "h", None)
+        layers = (
+            getattr(base_model, "layers", None)
+            or getattr(base_model, "h", None)
+            or getattr(base_model, "block", None)
+        )
         if layers is None:
             raise ValueError(f"Could not automatically locate transformer layers in {model.__class__.__name__}")
 
-        embed_tokens = getattr(base_model, "embed_tokens", None) or getattr(base_model, "wte", None)
-        norm = getattr(base_model, "norm", None) or getattr(base_model, "ln_f", None)
-        lm_head = getattr(model, "lm_head", None)
+        embed_tokens = (
+            getattr(base_model, "embed_tokens", None)
+            or getattr(base_model, "wte", None)
+            or getattr(base_model, "word_embeddings", None)
+        )
+        norm = (
+            getattr(base_model, "norm", None)
+            or getattr(base_model, "ln_f", None)
+            or getattr(base_model, "final_layernorm", None)
+        )
+        lm_head = getattr(model, "lm_head", None) or getattr(model, "embed_out", None)
 
         return layers, embed_tokens, norm, lm_head
 
@@ -113,6 +136,7 @@ class AutoModelSlicer:
             layers=layers,
             start_idx=start_idx,
             end_idx=end_idx,
+            total_layers=total_layers,
             is_first_stage=is_first,
             is_last_stage=is_last,
             embed_tokens=embed_tokens if is_first else None,
@@ -120,3 +144,4 @@ class AutoModelSlicer:
             lm_head=lm_head if is_last else None,
         )
         return slice_module.to(device)
+

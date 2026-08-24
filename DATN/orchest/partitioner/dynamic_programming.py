@@ -40,7 +40,8 @@ class DynamicPartitioner:
         ratios: Optional[List[float]] = None,
     ) -> List[SliceAssignment]:
         """
-        Runs O(N^2 * K^2) Dynamic Programming solver or custom ratio cutting partition.
+        Runs stage-based O(K * N^2) Dynamic Programming solver or custom ratio cutting partition.
+        Guarantees contiguous, non-fragmented layer assignments across K pipeline nodes.
         """
         if ratios is not None and len(ratios) > 0:
             return self.partition_by_ratio(layers, nodes, ratios, rtt_matrix, bw_matrix)
@@ -53,83 +54,71 @@ class DynamicPartitioner:
         rtt_matrix = rtt_matrix or {}
         bw_matrix = bw_matrix or {}
 
-        # dp[i][j]: Min cost to execute layers 0..i with layer i placed on node j
-        dp = [[float("inf")] * K for _ in range(N)]
-        # parent[i][j]: (prev_layer_idx, prev_node_idx)
-        parent = [[(-1, -1)] * K for _ in range(N)]
+        # dp[s][i]: Min latency to execute layers 0..i across first (s+1) nodes (nodes 0..s)
+        dp = [[float("inf")] * N for _ in range(K)]
+        # parent[s][i]: previous layer cut point (k-1) where node s takes [k..i]
+        parent = [[-1] * N for _ in range(K)]
 
-        # Base Cases: Single layer 0 on each node j
-        for j in range(K):
-            c_time = self.cost_calc.compute_time_ms(layers, 0, 0, nodes[j])
+        # Base case: Stage 0 (Node 0) takes layers 0..i
+        node_0 = nodes[0]
+        for i in range(N):
+            c_time = self.cost_calc.compute_time_ms(layers, 0, i, node_0)
             if c_time != float("inf"):
-                dp[0][j] = c_time
+                dp[0][i] = c_time
+                parent[0][i] = -1
 
-        # DP State Transitions
-        for i in range(1, N):
-            for j in range(K):
-                node_j = nodes[j]
-                
-                # Option 1: Continue slice on node j (layers k..i assigned to node j)
-                for k in range(0, i + 1):
-                    c_time = self.cost_calc.compute_time_ms(layers, k, i, node_j)
+        # DP Transitions: Stage s (Node s) takes layers k..i, preceding layers 0..k-1 on stages 0..s-1
+        for s in range(1, K):
+            node_s = nodes[s]
+            prev_node = nodes[s - 1]
+            rtt = rtt_matrix.get((prev_node.node_id, node_s.node_id), 1.0)
+            bw = bw_matrix.get((prev_node.node_id, node_s.node_id), 1000.0)
+
+            for i in range(N):
+                for k in range(1, i + 1):
+                    if dp[s - 1][k - 1] == float("inf"):
+                        continue
+
+                    c_time = self.cost_calc.compute_time_ms(layers, k, i, node_s)
                     if c_time == float("inf"):
-                        continue  # Memory limit exceeded on node j for sub-block k..i
+                        continue
 
-                    if k == 0:
-                        # Starting whole model slice from layer 0 on node j
-                        if c_time < dp[i][j]:
-                            dp[i][j] = c_time
-                            parent[i][j] = (-1, -1)
-                    else:
-                        # Preceding layer (k-1) was on node p
-                        for p in range(K):
-                            if dp[k - 1][p] == float("inf"):
-                                continue
+                    tensor_bytes = layers[k - 1].output_tensor_bytes
+                    comm_time = self.cost_calc.comm_time_ms(tensor_bytes, prev_node, node_s, rtt, bw)
 
-                            node_p = nodes[p]
-                            rtt = rtt_matrix.get((node_p.node_id, node_j.node_id), 1.0)
-                            bw = bw_matrix.get((node_p.node_id, node_j.node_id), 1000.0)
+                    total_cost = dp[s - 1][k - 1] + comm_time + c_time
+                    if total_cost < dp[s][i]:
+                        dp[s][i] = total_cost
+                        parent[s][i] = k - 1
 
-                            tensor_bytes = layers[k - 1].output_tensor_bytes
-                            comm_time = self.cost_calc.comm_time_ms(
-                                tensor_bytes, node_p, node_j, rtt, bw
-                            )
-
-                            total_cost = dp[k - 1][p] + comm_time + c_time
-                            if total_cost < dp[i][j]:
-                                dp[i][j] = total_cost
-                                parent[i][j] = (k - 1, p)
-
-        # Find best node for final layer N-1
-        best_last_node = -1
+        # Find best stage count (prefer using all K nodes if feasible, or minimal cost s)
+        best_stage = -1
         min_total_cost = float("inf")
-        for j in range(K):
-            if dp[N - 1][j] < min_total_cost:
-                min_total_cost = dp[N - 1][j]
-                best_last_node = j
+        # Check from s = K-1 down to 0
+        for s in range(K - 1, -1, -1):
+            if dp[s][N - 1] < float("inf"):
+                best_stage = s
+                min_total_cost = dp[s][N - 1]
+                break
 
-        if best_last_node == -1:
+        if best_stage == -1:
             raise RuntimeError(
                 f"Dynamic Slicing impossible: Total model memory requirements exceed available cluster VRAM/RAM across all {K} nodes."
             )
 
         # Reconstruct optimal partition trace
         raw_assignments = []
-        curr_layer = N - 1
-        curr_node = best_last_node
+        curr_i = N - 1
+        curr_s = best_stage
 
-        while curr_layer >= 0:
-            prev_l, prev_n = parent[curr_layer][curr_node]
-            if prev_l == -1:
-                start_l = 0
-            else:
-                start_l = prev_l + 1
-
-            raw_assignments.append((start_l, curr_layer, curr_node))
-            if prev_l == -1:
+        while curr_s >= 0 and curr_i >= 0:
+            prev_cut = parent[curr_s][curr_i]
+            start_l = 0 if prev_cut == -1 else prev_cut + 1
+            raw_assignments.append((start_l, curr_i, curr_s))
+            if prev_cut == -1:
                 break
-            curr_layer = prev_l
-            curr_node = prev_n
+            curr_i = prev_cut
+            curr_s -= 1
 
         raw_assignments.reverse()
 
@@ -138,7 +127,7 @@ class DynamicPartitioner:
         for idx, (start_l, end_l, node_idx) in enumerate(raw_assignments):
             n = nodes[node_idx]
             c_time = self.cost_calc.compute_time_ms(layers, start_l, end_l, n)
-            
+
             comm_time = 0.0
             if idx > 0:
                 prev_n = nodes[raw_assignments[idx - 1][2]]
@@ -154,12 +143,13 @@ class DynamicPartitioner:
                     layer_start=start_l,
                     layer_end=end_l,
                     layers_count=end_l - start_l + 1,
-                    estimated_compute_ms=round(c_time, 2),
+                    estimated_compute_ms=round(c_time if c_time != float("inf") else 0.0, 2),
                     estimated_comm_ms=round(comm_time, 2),
                 )
             )
 
         return assignments
+
 
     def partition_by_ratio(
         self,

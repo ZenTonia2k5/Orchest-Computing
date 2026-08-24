@@ -39,8 +39,10 @@ class UDPDiscoveryService:
         self._running = False
         self._sender_thread: Optional[threading.Thread] = None
         self._receiver_thread: Optional[threading.Thread] = None
+        self._receiver_sock: Optional[socket.socket] = None
         self.discovered_nodes: Dict[str, NodeBeacon] = {}
         self.on_node_discovered_cb: Optional[Callable[[NodeBeacon], None]] = None
+        self.on_host_beacon_received: Optional[Callable[[dict], None]] = None
 
     def start_beacon_sender(self, beacon_provider_fn: Callable[[], NodeBeacon], interval_sec: float = 2.0):
         """
@@ -63,8 +65,17 @@ class UDPDiscoveryService:
                             pass
                 except Exception:
                     pass
-                time.sleep(interval_sec)
-            sock.close()
+                
+                # Sleep in short increments to allow rapid thread termination on stop()
+                sleep_count = int(interval_sec / 0.1)
+                for _ in range(max(1, sleep_count)):
+                    if not self._running:
+                        break
+                    time.sleep(0.1)
+            try:
+                sock.close()
+            except Exception:
+                pass
 
         self._sender_thread = threading.Thread(target=_send_loop, daemon=True)
         self._sender_thread.start()
@@ -83,24 +94,49 @@ class UDPDiscoveryService:
             except AttributeError:
                 pass  # SO_REUSEPORT not available on Windows
             sock.bind(("", self.port))
+            sock.settimeout(0.5)
+            self._receiver_sock = sock
 
             while self._running:
                 try:
                     data, addr = sock.recvfrom(65535)
-                    beacon = NodeBeacon.from_json(data.decode("utf-8"))
+                    decoded = data.decode("utf-8")
+                    
+                    # Try parsing payload as general JSON first to check for HOST_BEACON
+                    try:
+                        payload = json.loads(decoded)
+                        if payload.get("type") == "HOST_BEACON":
+                            if self.on_host_beacon_received:
+                                self.on_host_beacon_received(payload)
+                            continue
+                    except Exception:
+                        pass
+
+                    beacon = NodeBeacon.from_json(decoded)
                     node_id = beacon.node_metrics.node_id
                     
                     is_new = node_id not in self.discovered_nodes
                     self.discovered_nodes[node_id] = beacon
 
-                    if is_new and self.on_node_discovered_cb:
+                    if self.on_node_discovered_cb:
                         self.on_node_discovered_cb(beacon)
+                except socket.timeout:
+                    continue
                 except Exception:
                     pass
-            sock.close()
+            try:
+                sock.close()
+            except Exception:
+                pass
 
         self._receiver_thread = threading.Thread(target=_listen_loop, daemon=True)
         self._receiver_thread.start()
 
     def stop(self):
         self._running = False
+        if self._receiver_sock:
+            try:
+                self._receiver_sock.close()
+            except Exception:
+                pass
+

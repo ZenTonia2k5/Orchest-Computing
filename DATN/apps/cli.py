@@ -44,10 +44,12 @@ def main():
     # orchest worker
     worker_parser = subparsers.add_parser("worker", help="Launch Worker node")
     worker_parser.add_argument("--port", type=int, default=5555)
+    worker_parser.add_argument("--transport", type=str, choices=["raw_tcp", "zmq", "grpc"], default="raw_tcp")
 
     # orchest host
     host_parser = subparsers.add_parser("host", help="Launch Host Orchestrator master")
     host_parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct")
+    host_parser.add_argument("--transport", type=str, choices=["raw_tcp", "zmq", "grpc"], default="raw_tcp")
 
     args = parser.parse_args()
 
@@ -55,11 +57,11 @@ def main():
         cmd_profile(args)
     elif args.command == "worker":
         from apps.worker_node import main as worker_main
-        sys.argv = [sys.argv[0]] + ["--port", str(args.port)]
+        sys.argv = [sys.argv[0]] + ["--port", str(args.port), "--transport", args.transport]
         worker_main()
     elif args.command == "host":
         from apps.host_node import main as host_main
-        sys.argv = [sys.argv[0]] + ["--model", args.model]
+        sys.argv = [sys.argv[0]] + ["--model", args.model, "--transport", args.transport]
         host_main()
     else:
         parser.print_help()

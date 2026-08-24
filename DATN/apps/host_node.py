@@ -22,9 +22,15 @@ def main():
     parser.add_argument("--hidden-size", type=int, default=896, help="Model hidden size")
     parser.add_argument("--intermediate-size", type=int, default=4864, help="Model intermediate size")
     parser.add_argument("--discovery-port", type=int, default=59001, help="UDP Discovery Port")
+    parser.add_argument("--transport", type=str, choices=["raw_tcp", "zmq", "grpc"], default="raw_tcp", help="Transport protocol backend")
+    parser.add_argument("--allowlist", type=str, default=None, help="Comma-separated allowed Node IDs")
     args = parser.parse_args()
 
-    host = HostOrchestrator(discovery_port=args.discovery_port)
+    allowlist_list = None
+    if args.allowlist:
+        allowlist_list = [nid.strip() for nid in args.allowlist.split(",") if nid.strip()]
+
+    host = HostOrchestrator(discovery_port=args.discovery_port, transport=args.transport, allowlist=allowlist_list)
     host.start_discovery()
 
     print(f"\n========================================================")

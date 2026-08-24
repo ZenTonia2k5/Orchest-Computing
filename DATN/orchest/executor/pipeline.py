@@ -15,9 +15,10 @@ class SwarmPipelineExecutor:
     Coordinates multi-node pipeline execution across swarm slice assignments.
     """
 
-    def __init__(self, slice_plan: List[SliceAssignment], secret_key: Optional[bytes] = None):
+    def __init__(self, slice_plan: List[SliceAssignment], secret_key: Optional[bytes] = None, transport_type: str = "raw_tcp"):
         self.slice_plan = slice_plan
         self.secret_key = secret_key
+        self.transport_type = transport_type
 
     def dispatch_slice_plan(self, model_name: str, total_layers: int) -> bool:
         """
@@ -63,6 +64,7 @@ class SwarmPipelineExecutor:
                 msg_type=MessageType.DISPATCH_SLICE,
                 meta=meta,
                 secret_key=self.secret_key,
+                transport_type=self.transport_type,
             )
             if not ok:
                 logger.error(f"Failed to send dispatch packet to {node.node_id} @ {node.ip_address}")

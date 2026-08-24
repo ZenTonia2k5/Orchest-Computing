@@ -20,9 +20,10 @@ def main():
     parser.add_argument("--node-id", type=str, default=None, help="Custom Node ID")
     parser.add_argument("--port", type=int, default=5555, help="TCP Port for tensor streaming")
     parser.add_argument("--discovery-port", type=int, default=59001, help="UDP Discovery Port")
+    parser.add_argument("--transport", type=str, choices=["raw_tcp", "zmq", "grpc"], default="raw_tcp", help="Transport protocol backend")
     args = parser.parse_args()
 
-    worker = WorkerNode(node_id=args.node_id, tcp_port=args.port, discovery_port=args.discovery_port)
+    worker = WorkerNode(node_id=args.node_id, tcp_port=args.port, discovery_port=args.discovery_port, transport_type=args.transport)
     worker.start()
 
     print(f"\n========================================================")
