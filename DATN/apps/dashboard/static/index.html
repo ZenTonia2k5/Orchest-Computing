@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orchest Computing - Universal Swarm MLOps App</title>
+    <title>Orchest Computing - Universal Swarm MLOps Platform</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,7 +11,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <!-- Top App Navigation & Mode Switcher -->
+        <!-- Top App Navigation & 3-Tab Mode Switcher -->
         <header class="app-header glass-panel">
             <div class="brand">
                 <div class="brand-logo">
@@ -23,19 +23,24 @@
                 </div>
                 <div class="brand-text">
                     <h2>ORCHEST</h2>
-                    <span>Edge Swarm MLOps</span>
+                    <span>Universal Edge Swarm MLOps</span>
                 </div>
             </div>
 
-            <!-- 2 PROMINENT BUTTONS: HOST OR WORKER MODE -->
+            <!-- 3 PROMINENT BUTTONS: HOST / WORKER / MANAGE FLEET -->
             <div class="mode-switcher-group">
                 <button class="mode-btn active" id="btn-mode-host">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                    <span>👑 Host Mode (Master Orchestrator)</span>
+                    <span>👑 Host Mode</span>
                 </button>
                 <button class="mode-btn" id="btn-mode-worker">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-                    <span>⚡ Worker Mode (Edge Node)</span>
+                    <span>⚡ Worker Mode</span>
+                    <span class="notification-dot" id="worker-notif-dot" style="display: none;"></span>
+                </button>
+                <button class="mode-btn" id="btn-mode-manage">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span>🛠️ Manage Fleet</span>
                 </button>
             </div>
 
@@ -44,7 +49,7 @@
             </div>
         </header>
 
-        <!-- MAIN VIEW: HOST MODE VIEW -->
+        <!-- VIEW 1: HOST MASTER MODE VIEW -->
         <main class="app-view active" id="view-host">
             <div class="host-controls glass-panel">
                 <div class="control-row">
@@ -52,10 +57,10 @@
                     <div class="control-item">
                         <label for="model-selector">AI Model Option:</label>
                         <select id="model-selector" class="custom-select">
-                            <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast)</option>
-                            <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm)</option>
-                            <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality)</option>
-                            <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm)</option>
+                            <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
+                            <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm - 28 Layers)</option>
+                            <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality - 16 Layers)</option>
+                            <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm - 28 Layers)</option>
                         </select>
                     </div>
 
@@ -83,22 +88,25 @@
                 <!-- RATIO CUTTING CUSTOMIZATION PANEL -->
                 <div class="ratio-panel" id="ratio-config-panel" style="display: none;">
                     <div class="ratio-header">
-                        <h4>✂️ Custom Ratio Work Distribution</h4>
+                        <div class="ratio-title-box">
+                            <h4>✂️ Custom Ratio Work Distribution (Auto-Balances to 100%)</h4>
+                            <span class="ratio-subtext">Adjusting any computer's slider automatically balances the remaining computers</span>
+                        </div>
                         <div class="ratio-presets">
                             <span class="preset-label">Presets:</span>
-                            <button class="btn-preset" data-preset="50-50">50 : 50 (Equal)</button>
-                            <button class="btn-preset" data-preset="70-30">70 : 30 (Host Heavy)</button>
-                            <button class="btn-preset" data-preset="30-70">30 : 70 (Worker Heavy)</button>
+                            <div class="preset-btn-group" id="dynamic-presets-container">
+                                <!-- Dynamically generated presets for 2, 3, 4+ computers -->
+                            </div>
                         </div>
                     </div>
 
                     <div class="ratio-sliders-container" id="node-ratio-sliders">
-                        <!-- Dynamically populated ratio sliders per node -->
+                        <!-- Dynamically populated auto-adjusting ratio sliders per computer -->
                     </div>
 
                     <div class="distribution-bar-wrapper">
                         <div class="bar-header">
-                            <span>Layer Allocation Preview:</span>
+                            <span>Layer Allocation Breakdown:</span>
                             <span id="distribution-text-preview">100% total</span>
                         </div>
                         <div class="distribution-bar" id="ratio-distribution-bar">
@@ -122,7 +130,7 @@
                 </div>
 
                 <div class="visual-pipeline-canvas" id="swarm-visual-map">
-                    <!-- Dynamic SVG & Node Stage Flow Cards rendered here -->
+                    <!-- Dynamic multi-stage execution pipeline rendered here -->
                 </div>
             </div>
 
@@ -131,8 +139,8 @@
                 <!-- LAN Swarm Topology & Partition Flow -->
                 <div class="swarm-panel glass-panel">
                     <div class="panel-header">
-                        <h3>LAN Swarm Topology (<span id="host-node-count">0</span> Nodes)</h3>
-                        <span class="sub-text">Dynamic Allocation Breakdown</span>
+                        <h3>LAN Swarm Topology (<span id="host-node-count">0</span> Active)</h3>
+                        <span class="sub-text">Connected Edge Computers in Cluster</span>
                     </div>
 
                     <div class="nodes-list" id="host-nodes-list">
@@ -172,57 +180,155 @@
             </div>
         </main>
 
-        <!-- MAIN VIEW: WORKER MODE VIEW -->
+        <!-- VIEW 2: WORKER MODE VIEW (With Connection Authorization & Time History Logs) -->
         <main class="app-view" id="view-worker">
-            <div class="worker-card glass-panel">
-                <div class="worker-header">
-                    <div class="worker-badge online">⚡ Worker Node Active</div>
-                    <span style="color: var(--text-muted)">Broadcasting UDP Beacon on Port 59001</span>
+            <div class="worker-layout-grid">
+                <!-- Left: Worker Control & Hardware Info -->
+                <div class="worker-card glass-panel">
+                    <div class="worker-header">
+                        <div class="worker-status-group">
+                            <div class="worker-badge online" id="worker-status-badge">⚡ Worker Node Active</div>
+                            <span id="worker-beacon-info" style="color: var(--text-muted); font-size: 0.8rem;">UDP Beacon: Port 59001</span>
+                        </div>
+                        <div class="worker-toggle-controls">
+                            <label class="switch-control-label">
+                                <input type="checkbox" id="toggle-worker-power" checked>
+                                <span class="slider-toggle"></span>
+                                <span class="toggle-text">Worker Service</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- INCOMING CONNECTION INVITATION NOTIFICATION BANNER -->
+                    <div class="worker-invitation-banner" id="worker-invitation-banner" style="display: none;">
+                        <div class="invitation-header">
+                            <span class="invitation-icon">🔔</span>
+                            <div class="invitation-title">
+                                <strong>Incoming Host Connection Request!</strong>
+                                <span class="invitation-sub" id="invitation-host-text">Host Master @ 192.168.1.135</span>
+                            </div>
+                        </div>
+                        <div class="invitation-details" id="invitation-details-text">
+                            Model: Qwen2.5-0.5B-Instruct • Layers [0..11] (12 Layers)
+                        </div>
+                        <div class="invitation-actions">
+                            <button class="btn btn-accept" id="btn-accept-invitation">
+                                <span>✅ Accept Connection</span>
+                            </button>
+                            <button class="btn btn-reject" id="btn-reject-invitation">
+                                <span>❌ Reject</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="worker-details-grid">
+                        <div class="worker-info-box">
+                            <span class="box-label">Node Identifier</span>
+                            <div class="box-val" id="worker-node-id">local_worker_edge</div>
+                        </div>
+                        <div class="worker-info-box">
+                            <span class="box-label">IP Address</span>
+                            <div class="box-val" id="worker-ip">--</div>
+                        </div>
+                        <div class="worker-info-box">
+                            <span class="box-label">TCP Streaming Port</span>
+                            <div class="box-val" id="worker-tcp-port">5555</div>
+                        </div>
+                        <div class="worker-info-box">
+                            <span class="box-label">Compute Device</span>
+                            <div class="box-val" id="worker-device">--</div>
+                        </div>
+                    </div>
+
+                    <h3 class="sub-section-title">Local Hardware Capacity</h3>
+                    <div class="metric-progress-group">
+                        <div class="metric-header">
+                            <span>Available Memory (VRAM / RAM)</span>
+                            <span id="worker-mem-text">-- MB</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="worker-mem-bar"></div>
+                        </div>
+                    </div>
+
+                    <div class="metric-progress-group">
+                        <div class="metric-header">
+                            <span>CPU Utilization</span>
+                            <span id="worker-cpu-text">-- %</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="worker-cpu-bar"></div>
+                        </div>
+                    </div>
+
+                    <div class="worker-slice-status-box">
+                        <div class="slice-header">
+                            <h4>Assigned Model Layer Slice</h4>
+                            <span class="slice-state-chip" id="worker-slice-state">IDLE</span>
+                        </div>
+                        <p id="worker-slice-text" style="color: var(--text-muted); margin-top: 6px;">Listening for Host Orchestrator model slice dispatch...</p>
+                    </div>
+
+                    <div class="worker-setting-row">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="toggle-auto-accept">
+                            <span>Auto-Accept Incoming Host Connections</span>
+                        </label>
+                    </div>
                 </div>
 
-                <div class="worker-details-grid">
-                    <div class="worker-info-box">
-                        <span class="box-label">Node Identifier</span>
-                        <div class="box-val" id="worker-node-id">--</div>
+                <!-- Right: Connection History & Time Logs -->
+                <div class="worker-logs-card glass-panel">
+                    <div class="logs-header">
+                        <div class="logs-title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <h3>Connection History & Time Logs</h3>
+                        </div>
+                        <button class="btn-clear-logs" id="btn-clear-worker-logs">Clear Logs</button>
                     </div>
-                    <div class="worker-info-box">
-                        <span class="box-label">IP Address</span>
-                        <div class="box-val" id="worker-ip">--</div>
+
+                    <div class="history-logs-container" id="worker-history-container">
+                        <!-- Rendered chronological time logs -->
                     </div>
-                    <div class="worker-info-box">
-                        <span class="box-label">TCP Streaming Port</span>
-                        <div class="box-val" id="worker-tcp-port">5555</div>
-                    </div>
-                    <div class="worker-info-box">
-                        <span class="box-label">Hardware Device</span>
-                        <div class="box-val" id="worker-device">--</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- VIEW 3: MANAGE FLEET TAB (Rename, Save, Delete, On/Off Connected PCs) -->
+        <main class="app-view" id="view-manage">
+            <!-- Fleet Overview Bar -->
+            <div class="fleet-overview-bar glass-panel">
+                <div class="fleet-stat-card">
+                    <span class="stat-label">Total Connected PCs</span>
+                    <span class="stat-val" id="fleet-total-count">0</span>
+                </div>
+                <div class="fleet-stat-card">
+                    <span class="stat-label">Active In Swarm</span>
+                    <span class="stat-val" style="color: var(--accent-emerald);" id="fleet-active-count">0</span>
+                </div>
+                <div class="fleet-stat-card">
+                    <span class="stat-label">Cluster Memory Pool</span>
+                    <span class="stat-val" style="color: var(--accent-cyan);" id="fleet-total-vram">0 GB</span>
+                </div>
+                <div class="fleet-actions">
+                    <button class="btn btn-secondary" id="btn-refresh-fleet">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                        <span>Refresh LAN Scan</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Fleet Computers Management Table / Cards -->
+            <div class="fleet-list-panel glass-panel">
+                <div class="panel-header fleet-header-bar">
+                    <div>
+                        <h3>Connected Edge Computers Management</h3>
+                        <span class="sub-text">Rename devices, toggle swarm inclusion on/off, or remove offline nodes</span>
                     </div>
                 </div>
 
-                <h3 class="sub-section-title">Local Machine Hardware Capacity</h3>
-                <div class="metric-progress-group">
-                    <div class="metric-header">
-                        <span>Available Memory (VRAM / RAM)</span>
-                        <span id="worker-mem-text">-- MB</span>
-                    </div>
-                    <div class="progress-bar-bg">
-                        <div class="progress-bar-fill" id="worker-mem-bar"></div>
-                    </div>
-                </div>
-
-                <div class="metric-progress-group">
-                    <div class="metric-header">
-                        <span>CPU Utilization</span>
-                        <span id="worker-cpu-text">-- %</span>
-                    </div>
-                    <div class="progress-bar-bg">
-                        <div class="progress-bar-fill" id="worker-cpu-bar"></div>
-                    </div>
-                </div>
-
-                <div class="worker-slice-status-box">
-                    <h4>Assigned Model Layer Slice</h4>
-                    <p id="worker-slice-text" style="color: var(--text-muted); margin-top: 6px;">Listening for Host Orchestrator model slice dispatch...</p>
+                <div class="fleet-cards-grid" id="fleet-nodes-container">
+                    <!-- Rendered Fleet PC Cards with Rename, On/Off, Delete, Ping -->
                 </div>
             </div>
         </main>

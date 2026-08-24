@@ -1,6 +1,8 @@
 import logging
 import threading
 import time
+import uuid
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 import torch
@@ -20,6 +22,7 @@ class WorkerNode:
     """
     Worker Node Process running on edge device (Windows, Mac, Linux).
     Hosts and computes assigned model layer slice in Swarm Inference.
+    Supports live connection authorization (Accept / Reject) and connection history logging.
     """
 
     def __init__(
@@ -28,11 +31,13 @@ class WorkerNode:
         tcp_port: int = 5555,
         discovery_port: int = 59001,
         secret_key: Optional[bytes] = None,
+        auto_accept: bool = True,
     ):
         self.profiler = NodeProfiler(node_id=node_id)
         self.tcp_port = tcp_port
         self.discovery_port = discovery_port
         self.secret_key = secret_key
+        self.auto_accept = auto_accept
 
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.transport_server = TensorTransportServer(
@@ -45,6 +50,10 @@ class WorkerNode:
         self.next_node_ip: Optional[str] = None
         self.next_node_port: Optional[int] = None
         self.status = "IDLE"
+
+        # Connection authorization & history logs
+        self.pending_requests: List[Dict[str, Any]] = []
+        self.connection_history: List[Dict[str, Any]] = []
 
     def start(self):
         logger.info(f"Starting WorkerNode ID={self.profiler.node_id} on TCP port {self.tcp_port}")
@@ -67,7 +76,82 @@ class WorkerNode:
     def stop(self):
         self.discovery_service.stop()
         self.transport_server.stop()
+        self.status = "OFFLINE"
         logger.info("WorkerNode stopped.")
+
+    def record_history_log(
+        self,
+        event_type: str,
+        host_id: str,
+        host_ip: str,
+        model_name: str,
+        details: str,
+        status: str,
+    ) -> Dict[str, Any]:
+        log_entry = {
+            "id": str(uuid.uuid4())[:8],
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "event_type": event_type,
+            "host_id": host_id or "host_master",
+            "host_ip": host_ip or "127.0.0.1",
+            "model_name": model_name or "N/A",
+            "details": details,
+            "status": status,
+        }
+        self.connection_history.insert(0, log_entry)
+        # Keep recent 100 entries
+        if len(self.connection_history) > 100:
+            self.connection_history = self.connection_history[:100]
+        return log_entry
+
+    def accept_request(self, req_id: str) -> bool:
+        target_req = None
+        for req in self.pending_requests:
+            if req["id"] == req_id:
+                target_req = req
+                break
+
+        if not target_req:
+            return False
+
+        self.pending_requests = [r for r in self.pending_requests if r["id"] != req_id]
+        meta = target_req["meta"]
+
+        self.record_history_log(
+            event_type="HOST_CONNECT",
+            host_id=target_req.get("host_id", "host_master"),
+            host_ip=target_req.get("host_ip", "127.0.0.1"),
+            model_name=meta.get("model_name", "LLM"),
+            details=f"Accepted Layers [{meta.get('layer_start')}..{meta.get('layer_end')}] of {meta.get('total_layers')}",
+            status="ACCEPTED",
+        )
+
+        self._execute_slice_load(meta)
+        return True
+
+    def reject_request(self, req_id: str) -> bool:
+        target_req = None
+        for req in self.pending_requests:
+            if req["id"] == req_id:
+                target_req = req
+                break
+
+        if not target_req:
+            return False
+
+        self.pending_requests = [r for r in self.pending_requests if r["id"] != req_id]
+        meta = target_req["meta"]
+
+        self.record_history_log(
+            event_type="HOST_CONNECT",
+            host_id=target_req.get("host_id", "host_master"),
+            host_ip=target_req.get("host_ip", "127.0.0.1"),
+            model_name=meta.get("model_name", "LLM"),
+            details=f"Rejected Layers [{meta.get('layer_start')}..{meta.get('layer_end')}]",
+            status="REJECTED",
+        )
+        self.status = "REJECTED"
+        return True
 
     def _on_message_received(
         self, msg_type: MessageType, meta: Dict[str, Any], tensor: Optional[torch.Tensor]
@@ -78,6 +162,52 @@ class WorkerNode:
             self._handle_forward_tensor(meta, tensor)
 
     def _handle_dispatch_slice(self, meta: Dict[str, Any]):
+        model_name = meta.get("model_name", "Qwen/Qwen2.5-0.5B-Instruct")
+        start_idx = meta.get("layer_start", 0)
+        end_idx = meta.get("layer_end", 23)
+        total_layers = meta.get("total_layers", 24)
+        host_id = meta.get("host_id", "host_master")
+        host_ip = meta.get("host_ip", "127.0.0.1")
+
+        req_id = str(uuid.uuid4())[:8]
+        req_obj = {
+            "id": req_id,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "host_id": host_id,
+            "host_ip": host_ip,
+            "model_name": model_name,
+            "layer_start": start_idx,
+            "layer_end": end_idx,
+            "total_layers": total_layers,
+            "meta": meta,
+        }
+
+        if not self.auto_accept:
+            self.pending_requests.append(req_obj)
+            self.status = "INVITATION_PENDING"
+            self.record_history_log(
+                event_type="INVITATION_RECEIVED",
+                host_id=host_id,
+                host_ip=host_ip,
+                model_name=model_name,
+                details=f"Incoming invitation for Layers [{start_idx}..{end_idx}]",
+                status="PENDING",
+            )
+            logger.info(f"Incoming connection invitation from {host_id} @ {host_ip}. Awaiting Worker Accept/Reject.")
+            return
+
+        # Auto-accept flow
+        self.record_history_log(
+            event_type="HOST_CONNECT",
+            host_id=host_id,
+            host_ip=host_ip,
+            model_name=model_name,
+            details=f"Connected & Allocated Layers [{start_idx}..{end_idx}] ({end_idx - start_idx + 1} layers)",
+            status="ACCEPTED",
+        )
+        self._execute_slice_load(meta)
+
+    def _execute_slice_load(self, meta: Dict[str, Any]):
         model_name = meta["model_name"]
         start_idx = meta["layer_start"]
         end_idx = meta["layer_end"]
@@ -86,12 +216,11 @@ class WorkerNode:
         self.next_node_port = meta.get("next_port")
 
         logger.info(
-            f"Received Slice Assignment: Model={model_name}, Layers [{start_idx}..{end_idx}] of {total_layers}"
+            f"Loading Slice Assignment: Model={model_name}, Layers [{start_idx}..{end_idx}] of {total_layers}"
         )
         self.status = "LOADING"
         self.slice_info = meta
 
-        # Run heavy model downloading/loading in background thread to avoid blocking TCP socket ACK
         def _bg_load():
             device = "cpu"
             if torch.cuda.is_available():
@@ -146,3 +275,4 @@ class WorkerNode:
             )
         else:
             logger.info("Pipeline Final Stage completed on this node.")
+

@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import socket
 import asyncio
 from typing import Dict, Any, Optional, List
 
@@ -12,9 +14,10 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from orchest.executor.host import HostOrchestrator
+from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
 
-app = FastAPI(title="Orchest Computing MLOps Dashboard")
+app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
 
 # Serve static asset files (HTML, CSS, JS)
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -22,13 +25,22 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
+local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=False)
+
+
+MODEL_CONFIGS = {
+    "Qwen/Qwen2.5-0.5B-Instruct": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864},
+    "Qwen/Qwen2-1.5B-Instruct": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960},
+    "meta-llama/Llama-3.2-1B": {"num_layers": 16, "hidden_size": 2048, "intermediate_size": 8192},
+    "meta-llama/Llama-3.2-3B": {"num_layers": 28, "hidden_size": 3072, "intermediate_size": 8192},
+}
 
 
 class PartitionRequest(BaseModel):
     model_name: str = "Qwen/Qwen2.5-0.5B-Instruct"
-    num_layers: int = 24
-    hidden_size: int = 896
-    intermediate_size: int = 4864
+    num_layers: Optional[int] = None
+    hidden_size: Optional[int] = None
+    intermediate_size: Optional[int] = None
     partition_mode: str = "auto"
     custom_ratios: Optional[List[float]] = None
 
@@ -39,16 +51,56 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.7
 
 
+class NodeUpdateRequest(BaseModel):
+    node_id: str
+    alias: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class NodeDeleteRequest(BaseModel):
+    node_id: str
+
+
+class WorkerToggleRequest(BaseModel):
+    action: str = "start"  # "start" | "stop"
+    auto_accept: Optional[bool] = None
+
+
+class WorkerRespondRequest(BaseModel):
+    request_id: str
+    action: str  # "accept" | "reject"
+
+
+class NodePingRequest(BaseModel):
+    node_id: str
+    ip: str
+    port: int = 5555
+
+
 @app.on_event("startup")
 def startup_event():
+    # Start Host Discovery Listener
     host_orchestrator.start_discovery()
-    # Pre-plan Dynamic Programming slicing for default model
-    host_orchestrator.plan_model_slicing("Qwen/Qwen2.5-0.5B-Instruct", num_layers=24, hidden_size=896, intermediate_size=4864)
+    
+    # Start Local Worker Node
+    try:
+        local_worker.start()
+    except Exception as e:
+        print(f"Local worker start notice: {e}")
+
+    cfg = MODEL_CONFIGS.get("Qwen/Qwen2.5-0.5B-Instruct", {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+    host_orchestrator.plan_model_slicing(
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        num_layers=cfg["num_layers"],
+        hidden_size=cfg["hidden_size"],
+        intermediate_size=cfg["intermediate_size"],
+    )
 
 
 @app.on_event("shutdown")
 def shutdown_event():
     host_orchestrator.stop()
+    local_worker.stop()
 
 
 @app.get("/", response_class=FileResponse)
@@ -56,34 +108,150 @@ def serve_index():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 
+# ---------------------------------------------------------
+# Cluster & Fleet Management APIs
+# ---------------------------------------------------------
+
 @app.get("/api/cluster")
 def get_cluster_status():
-    nodes = host_orchestrator.get_cluster_topology()
+    from orchest.profiler.node_profiler import NodeProfiler
+    nodes = host_orchestrator.get_cluster_topology(include_disabled=True)
+    if not nodes:
+        host_profiler = NodeProfiler(node_id="host_master")
+        local_node = host_profiler.profile()
+        setattr(local_node, "tcp_port", 5555)
+        setattr(local_node, "alias", "Host Master (Local)")
+        setattr(local_node, "enabled", True)
+        nodes = [local_node]
+
     return {
         "node_count": len(nodes),
-        "active_model": host_orchestrator.active_model_name,
+        "active_nodes_count": len([n for n in nodes if getattr(n, "enabled", True)]),
+        "active_model": host_orchestrator.active_model_name or "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_configs": MODEL_CONFIGS,
         "nodes": [n.to_dict() for n in nodes],
+        "node_configs": host_orchestrator.node_configs,
         "slice_plan": [s.to_dict() for s in host_orchestrator.current_slice_plan],
     }
 
 
-@app.get("/api/worker_status")
+@app.post("/api/node/update")
+def update_node(req: NodeUpdateRequest):
+    cfg = host_orchestrator.update_node_config(
+        node_id=req.node_id, alias=req.alias, enabled=req.enabled
+    )
+    # Re-partition model slice if enabled/disabled state changed
+    if req.enabled is not None and host_orchestrator.active_model_name:
+        cfg_m = MODEL_CONFIGS.get(host_orchestrator.active_model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+        host_orchestrator.plan_model_slicing(
+            model_name=host_orchestrator.active_model_name,
+            num_layers=cfg_m["num_layers"],
+            hidden_size=cfg_m["hidden_size"],
+            intermediate_size=cfg_m["intermediate_size"],
+        )
+    return {"status": "SUCCESS", "node_id": req.node_id, "config": cfg}
+
+
+@app.post("/api/node/delete")
+def delete_node(req: NodeDeleteRequest):
+    ok = host_orchestrator.delete_node(req.node_id)
+    if host_orchestrator.active_model_name:
+        cfg_m = MODEL_CONFIGS.get(host_orchestrator.active_model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+        host_orchestrator.plan_model_slicing(
+            model_name=host_orchestrator.active_model_name,
+            num_layers=cfg_m["num_layers"],
+            hidden_size=cfg_m["hidden_size"],
+            intermediate_size=cfg_m["intermediate_size"],
+        )
+    return {"status": "SUCCESS" if ok else "NOT_FOUND", "node_id": req.node_id}
+
+
+@app.post("/api/node/ping")
+def ping_node(req: NodePingRequest):
+    start = time.time()
+    reachable = False
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.5)
+        s.connect((req.ip, req.port))
+        s.close()
+        reachable = True
+    except Exception:
+        reachable = False
+
+    rtt_ms = round((time.time() - start) * 1000, 2)
+    return {
+        "node_id": req.node_id,
+        "reachable": reachable,
+        "rtt_ms": rtt_ms if reachable else 999.0,
+    }
+
+
+# ---------------------------------------------------------
+# Worker Node APIs (Authorization, Status, Logs)
+# ---------------------------------------------------------
+
+@app.get("/api/worker/status")
 def get_worker_status():
-    from orchest.profiler.node_profiler import NodeProfiler
-    profiler = NodeProfiler(node_id="local_worker_node")
-    metrics = profiler.profile()
+    metrics = local_worker.profiler.profile()
     data = metrics.to_dict()
-    data["tcp_port"] = 5555
+    data["tcp_port"] = local_worker.tcp_port
+    data["worker_status"] = local_worker.status
+    data["auto_accept"] = local_worker.auto_accept
+    data["pending_requests"] = local_worker.pending_requests
+    data["connection_history"] = local_worker.connection_history
+    data["slice_info"] = local_worker.slice_info
     return data
 
 
+@app.post("/api/worker/toggle")
+def toggle_worker(req: WorkerToggleRequest):
+    if req.auto_accept is not None:
+        local_worker.auto_accept = req.auto_accept
+
+    if req.action == "start":
+        if local_worker.status == "OFFLINE":
+            local_worker.start()
+        return {"status": "SUCCESS", "worker_status": local_worker.status, "auto_accept": local_worker.auto_accept}
+    elif req.action == "stop":
+        local_worker.stop()
+        return {"status": "SUCCESS", "worker_status": "OFFLINE", "auto_accept": local_worker.auto_accept}
+    return {"status": "ERROR", "message": "Unknown action"}
+
+
+@app.post("/api/worker/respond_request")
+def respond_worker_request(req: WorkerRespondRequest):
+    if req.action == "accept":
+        ok = local_worker.accept_request(req.request_id)
+        return {"status": "ACCEPTED" if ok else "NOT_FOUND", "request_id": req.request_id}
+    elif req.action == "reject":
+        ok = local_worker.reject_request(req.request_id)
+        return {"status": "REJECTED" if ok else "NOT_FOUND", "request_id": req.request_id}
+    return {"status": "ERROR", "message": "Invalid action"}
+
+
+@app.post("/api/worker/clear_history")
+def clear_worker_history():
+    local_worker.connection_history = []
+    return {"status": "SUCCESS"}
+
+
+# ---------------------------------------------------------
+# Slicing & Swarm Generation APIs
+# ---------------------------------------------------------
+
 @app.post("/api/partition")
 def trigger_partition(req: PartitionRequest):
+    cfg = MODEL_CONFIGS.get(req.model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+    num_layers = req.num_layers or cfg["num_layers"]
+    hidden_size = req.hidden_size or cfg["hidden_size"]
+    intermediate_size = req.intermediate_size or cfg["intermediate_size"]
+
     slice_plan = host_orchestrator.plan_model_slicing(
         model_name=req.model_name,
-        num_layers=req.num_layers,
-        hidden_size=req.hidden_size,
-        intermediate_size=req.intermediate_size,
+        num_layers=num_layers,
+        hidden_size=hidden_size,
+        intermediate_size=intermediate_size,
         partition_mode=req.partition_mode,
         custom_ratios=req.custom_ratios,
     )
@@ -91,6 +259,7 @@ def trigger_partition(req: PartitionRequest):
     return {
         "status": "SUCCESS",
         "model_name": req.model_name,
+        "num_layers": num_layers,
         "partition_mode": req.partition_mode,
         "slice_plan": [s.to_dict() for s in slice_plan],
     }

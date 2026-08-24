@@ -39,6 +39,8 @@ class SwarmPipelineExecutor:
                 next_port = getattr(next_node, "tcp_port", 5555)
 
             meta = {
+                "host_id": getattr(self, "host_id", "host_master"),
+                "host_ip": getattr(self, "host_ip", "127.0.0.1"),
                 "model_name": model_name,
                 "layer_start": slice_assign.layer_start,
                 "layer_end": slice_assign.layer_end,
