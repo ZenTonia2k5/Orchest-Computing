@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Orchest Computing - Universal Swarm MLOps Platform</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=20260827_01">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -51,244 +54,609 @@
 
         <!-- VIEW 1: HOST MASTER MODE VIEW -->
         <main class="app-view active" id="view-host">
-            <div class="host-controls glass-panel">
-                <div class="control-row">
-                    <!-- MODEL OPTION SELECTOR -->
-                    <div class="control-item">
-                        <label for="model-selector">AI Model Option:</label>
-                        <select id="model-selector" class="custom-select">
-                            <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
-                            <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm - 28 Layers)</option>
-                            <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality - 16 Layers)</option>
-                            <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm - 28 Layers)</option>
-                        </select>
-                    </div>
-
-                    <!-- PARTITION STRATEGY MODE -->
-                    <div class="control-item">
-                        <label>Partition Strategy:</label>
-                        <div class="strategy-toggle-group">
-                            <button class="strategy-btn active" id="strategy-auto" data-mode="auto">
-                                <span>🤖 Auto DP Solver</span>
-                            </button>
-                            <button class="strategy-btn" id="strategy-ratio" data-mode="ratio">
-                                <span>✂️ Ratio Cutting</span>
-                            </button>
+            <!-- SWARM INFERENCE ENGINE MASTER POWER & AUTO-BENCHMARK BAR -->
+            <div class="engine-master-bar glass-panel" id="engine-master-bar">
+                <div class="engine-master-info">
+                    <div class="engine-state-dot standby" id="engine-state-dot"></div>
+                    <div>
+                        <div class="engine-title-row">
+                            <strong id="engine-status-title">Swarm Inference Engine: STANDBY</strong>
+                            <span class="engine-mode-chip standby" id="engine-status-chip">Standby (Idle)</span>
                         </div>
-                    </div>
-
-                    <div class="control-item action-item">
-                        <button class="btn btn-primary" id="btn-run-dp">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                            <span id="btn-partition-label">Apply Partition</span>
-                        </button>
+                        <span class="engine-subtext" id="engine-countdown-text">Auto-Benchmark is ACTIVE: re-running hardware rating every 5 mins (Next in 5m 00s)</span>
                     </div>
                 </div>
+                <div class="engine-master-controls">
+                    <button class="btn btn-engine-power" id="btn-toggle-engine">
+                        <span id="btn-engine-power-icon">▶️</span>
+                        <span id="btn-engine-power-text">Start Swarm Inference</span>
+                    </button>
+                </div>
+            </div>
 
-                <!-- RATIO CUTTING CUSTOMIZATION PANEL -->
-                <div class="ratio-panel" id="ratio-config-panel" style="display: none;">
-                    <div class="ratio-header">
-                        <div class="ratio-title-box">
-                            <h4>✂️ Custom Ratio Work Distribution (Auto-Balances to 100%)</h4>
-                            <span class="ratio-subtext">Adjusting any computer's slider automatically balances the remaining computers</span>
+            <!-- COMPONENT VISIBILITY & DRAG-TO-SORT TOOLBAR -->
+            <div class="component-visibility-bar" id="visibility-toolbar">
+                <span class="vis-toolbar-label">👁️ Show / Sort:</span>
+                <button class="toggle-chip-btn active" data-toggle-target="card-chat" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>💬 Swarm Chat</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-visual-map" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>🗺️ Pipeline Map</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-host-controls" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>🎛️ Partition Controls</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-swarm-topology" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>🖥️ Swarm Topology</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-benchmark" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>⚡ AI Rating</span>
+                </button>
+            </div>
+
+            <!-- DRAGGABLE HOST CARDS CONTAINER -->
+            <div class="host-cards-container" id="host-cards-container">
+                <!-- 1. SWARM CHAT BOX -->
+                <div class="host-card-item" data-card-id="card-chat">
+                    <div class="chat-panel glass-panel card-collapsible" id="card-chat">
+                        <div class="chat-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <div class="chat-title-group">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <span class="pulse-dot"></span>
+                                <span id="chat-active-model-title">Qwen2.5-0.5B Swarm Chat</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="chat-speed-tag" id="chat-speed">Stream Active</span>
+                                <button class="btn-card-toggle" data-toggle-target="card-chat" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
                         </div>
-                        <div class="ratio-presets">
-                            <span class="preset-label">Presets:</span>
-                            <div class="preset-btn-group" id="dynamic-presets-container">
-                                <!-- Dynamically generated presets for 2, 3, 4+ computers -->
+
+                        <div class="collapsible-body">
+                            <div class="chat-box-messages" id="chat-messages-container">
+                                <div class="chat-msg system">
+                                    👋 Welcome to <strong>Orchest Computing</strong>! Type a prompt in the chat box below to perform token-by-token swarm inference across connected LAN edge devices.
+                                </div>
+                            </div>
+
+                            <div class="chat-input-row">
+                                <input type="text" id="chat-input-field" placeholder="Ask a question or enter a prompt for Swarm LLM..." autocomplete="off">
+                                <button class="btn btn-primary btn-chat-send" id="btn-chat-send">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                    <span>Send</span>
+                                </button>
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <div class="ratio-sliders-container" id="node-ratio-sliders">
-                        <!-- Dynamically populated auto-adjusting ratio sliders per computer -->
-                    </div>
-
-                    <div class="distribution-bar-wrapper">
-                        <div class="bar-header">
-                            <span>Layer Allocation Breakdown:</span>
-                            <span id="distribution-text-preview">100% total</span>
+                <!-- 2. VISUAL EXECUTION MAP (LIVE SWARM DATA FLOW) -->
+                <div class="host-card-item" data-card-id="card-visual-map">
+                    <div class="visual-map-card glass-panel card-collapsible" id="card-visual-map">
+                        <div class="visual-map-header">
+                            <div class="visual-title">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+                                <h3>Live Swarm Pipeline Execution Map</h3>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div class="pipeline-status-badge" id="pipeline-status-badge">
+                                    <span class="status-pulse"></span>
+                                    <span id="pipeline-status-text">Pipeline Ready</span>
+                                </div>
+                                <button class="btn-card-toggle" data-toggle-target="card-visual-map" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
                         </div>
-                        <div class="distribution-bar" id="ratio-distribution-bar">
-                            <!-- Visual distribution segments -->
+
+                        <div class="collapsible-body">
+                            <div class="visual-pipeline-canvas" id="swarm-visual-map">
+                                <!-- Dynamic multi-stage execution pipeline rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. HOST CONTROLS & PARTITION / CUTTING CONFIG -->
+                <div class="host-card-item" data-card-id="card-host-controls">
+                    <div class="host-controls glass-panel card-collapsible" id="card-host-controls">
+                        <div class="card-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <h4 style="font-size: 0.95rem; font-weight: 600; color: #f1f5f9; display: flex; align-items: center; gap: 8px;">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <span>🎛️ Swarm Model & Partition Strategy / Cutting Configuration</span>
+                            </h4>
+                            <button class="btn-card-toggle" data-toggle-target="card-host-controls" title="Collapse / Expand Section">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </button>
+                        </div>
+
+                        <div class="collapsible-body">
+                            <div class="control-row">
+                                <!-- MODEL OPTION SELECTOR -->
+                                <div class="control-item">
+                                    <label for="model-selector">AI Model Option:</label>
+                                    <select id="model-selector" class="custom-select">
+                                        <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
+                                        <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm - 28 Layers)</option>
+                                        <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality - 16 Layers)</option>
+                                        <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm - 28 Layers)</option>
+                                    </select>
+                                </div>
+
+                                <!-- PARTITION STRATEGY MODE -->
+                                <div class="control-item">
+                                    <label>Partition Strategy:</label>
+                                    <div class="strategy-toggle-group">
+                                        <button class="strategy-btn active" id="strategy-auto" data-mode="auto">
+                                            <span>🤖 Auto DP Solver</span>
+                                        </button>
+                                        <button class="strategy-btn" id="strategy-ratio" data-mode="ratio">
+                                            <span>✂️ Ratio Cutting</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="control-item action-item">
+                                    <button class="btn btn-primary" id="btn-run-dp">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                        <span id="btn-partition-label">Apply Partition</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- RATIO CUTTING CUSTOMIZATION PANEL -->
+                            <div class="ratio-panel" id="ratio-config-panel" style="display: none;">
+                                <div class="ratio-header">
+                                    <div class="ratio-title-box">
+                                        <h4>✂️ Custom Ratio Work Distribution (Auto-Balances to 100%)</h4>
+                                        <span class="ratio-subtext">Adjusting any computer's slider automatically balances the remaining computers</span>
+                                    </div>
+                                    <div class="ratio-presets">
+                                        <span class="preset-label">Presets:</span>
+                                        <div class="preset-btn-group" id="dynamic-presets-container">
+                                            <!-- Dynamically generated presets for 2, 3, 4+ computers -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="ratio-sliders-container" id="node-ratio-sliders">
+                                    <!-- Dynamically populated auto-adjusting ratio sliders per computer -->
+                                </div>
+
+                                <div class="distribution-bar-wrapper">
+                                    <div class="bar-header">
+                                        <span>Layer Allocation Breakdown:</span>
+                                        <span id="distribution-text-preview">100% total</span>
+                                    </div>
+                                    <div class="distribution-bar" id="ratio-distribution-bar">
+                                        <!-- Visual distribution segments -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. LAN SWARM TOPOLOGY -->
+                <div class="host-card-item" data-card-id="card-swarm-topology">
+                    <div class="swarm-panel glass-panel card-collapsible" id="card-swarm-topology">
+                        <div class="panel-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <div>
+                                    <h3>LAN Swarm Topology (<span id="host-node-count">0</span> Active)</h3>
+                                    <span class="sub-text">Connected Edge Computers in Cluster</span>
+                                </div>
+                            </div>
+                            <button class="btn-card-toggle" data-toggle-target="card-swarm-topology" title="Collapse / Expand Section">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </button>
+                        </div>
+
+                        <div class="collapsible-body">
+                            <div class="nodes-list" id="host-nodes-list">
+                                <!-- Rendered Minimal Node Cards (Connected devices only) -->
+                            </div>
+
+                            <h4 class="sub-section-title">Model Layer Slicing Allocation</h4>
+                            <div class="slice-flow-list" id="host-slice-flow">
+                                <!-- Rendered Slice Pipeline -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. AI HARDWARE PERFORMANCE BENCHMARK & RATING CARD -->
+                <div class="host-card-item" data-card-id="card-benchmark">
+                    <div class="benchmark-card glass-panel card-collapsible" id="card-benchmark">
+                        <div class="benchmark-header">
+                            <div class="benchmark-title-box">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <div class="benchmark-icon-pulse">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                </div>
+                                <div>
+                                    <h3>Client AI Inference Performance & Rating</h3>
+                                    <span class="benchmark-subtext">Real-time LLM Transformer FLOPs & Hardware Benchmark on Startup</span>
+                                </div>
+                            </div>
+                            <div class="benchmark-actions">
+                                <span class="benchmark-badge" id="benchmark-status-badge">Ready</span>
+                                <button class="btn btn-secondary btn-sm" id="btn-show-prefill-decode" title="View Prefill & Decode Analytical Breakdown">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"></path></svg>
+                                    <span>📊 Chi tiết Prefill & Decode</span>
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="btn-refresh-benchmark" title="Re-run AI Hardware Benchmark">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                    <span id="btn-refresh-benchmark-text">⚡ Re-run Benchmark</span>
+                                </button>
+                                <button class="btn-card-toggle" data-toggle-target="card-benchmark" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-body">
+                            <div class="benchmark-grid">
+                                <div class="benchmark-summary-panel">
+                                    <div class="rating-tier-tag" id="bench-tier-tag">Tier S (High Performance)</div>
+                                    <div class="rating-main-stat">
+                                        <span class="rating-number" id="bench-tflops-val">0.00</span>
+                                        <span class="rating-unit">TFLOPs</span>
+                                    </div>
+                                    <div class="rating-meta">
+                                        <span id="bench-device-name">Detecting Hardware...</span>
+                                        <span class="temp-stat" id="bench-temp-val">🌡️ 45.0°C</span>
+                                    </div>
+                                </div>
+
+                                <div class="benchmark-subscores-grid">
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🖥️</span>
+                                            <span class="score-label">CPU Inference</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="bench-cpu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🎮</span>
+                                            <span class="score-label">GPU Acceleration</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="bench-gpu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🧠</span>
+                                            <span class="score-label">NPU / Graph Engine</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="bench-npu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card highlight">
+                                        <div class="score-header">
+                                            <span class="score-icon">🔥</span>
+                                            <span class="score-label">All-Hardware Peak</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="bench-all-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- VISUAL EXECUTION MAP (LIVE SWARM DATA FLOW) -->
-            <div class="visual-map-card glass-panel">
-                <div class="visual-map-header">
-                    <div class="visual-title">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-                        <h3>Live Swarm Pipeline Execution Map</h3>
-                    </div>
-                    <div class="pipeline-status-badge" id="pipeline-status-badge">
-                        <span class="status-pulse"></span>
-                        <span id="pipeline-status-text">Pipeline Ready</span>
-                    </div>
-                </div>
-
-                <div class="visual-pipeline-canvas" id="swarm-visual-map">
-                    <!-- Dynamic multi-stage execution pipeline rendered here -->
-                </div>
-            </div>
-
-            <!-- 2-COLUMN LAYOUT: SWARM CLUSTER & CHAT BOX -->
-            <div class="host-grid">
-                <!-- LAN Swarm Topology & Partition Flow -->
-                <div class="swarm-panel glass-panel">
-                    <div class="panel-header">
-                        <h3>LAN Swarm Topology (<span id="host-node-count">0</span> Active)</h3>
-                        <span class="sub-text">Connected Edge Computers in Cluster</span>
-                    </div>
-
-                    <div class="nodes-list" id="host-nodes-list">
-                        <!-- Rendered Node Cards -->
-                    </div>
-
-                    <h4 class="sub-section-title">Model Layer Slicing Allocation</h4>
-                    <div class="slice-flow-list" id="host-slice-flow">
-                        <!-- Rendered Slice Pipeline -->
-                    </div>
-                </div>
-
-                <!-- CHAT BOX -->
-                <div class="chat-panel glass-panel">
-                    <div class="chat-header">
-                        <div class="chat-title-group">
-                            <span class="pulse-dot"></span>
-                            <span id="chat-active-model-title">Qwen2.5-0.5B Swarm Chat</span>
-                        </div>
-                        <span class="chat-speed-tag" id="chat-speed">Stream Active</span>
-                    </div>
-
-                    <div class="chat-box-messages" id="chat-messages-container">
-                        <div class="chat-msg system">
-                            👋 Welcome to <strong>Orchest Computing</strong>! Type a prompt in the chat box below to perform token-by-token swarm inference across connected LAN edge devices.
-                        </div>
-                    </div>
-
-                    <div class="chat-input-row">
-                        <input type="text" id="chat-input-field" placeholder="Ask a question or enter a prompt for Swarm LLM..." autocomplete="off">
-                        <button class="btn btn-primary btn-chat-send" id="btn-chat-send">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                            <span>Send</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
         </main>
 
-        <!-- VIEW 2: WORKER MODE VIEW (With Connection Authorization & Time History Logs) -->
+        <!-- VIEW 2: WORKER MODE VIEW (With Connection Authorization, Time History Logs & Drag-to-Sort) -->
         <main class="app-view" id="view-worker">
-            <div class="worker-layout-grid">
-                <!-- Left: Worker Control & Hardware Info -->
-                <div class="worker-card glass-panel">
-                    <div class="worker-header">
-                        <div class="worker-status-group">
-                            <div class="worker-badge online" id="worker-status-badge">⚡ Worker Node Active</div>
-                            <span id="worker-beacon-info" style="color: var(--text-muted); font-size: 0.8rem;">UDP Beacon: Port 59001</span>
-                        </div>
-                        <div class="worker-toggle-controls">
-                            <label class="switch-control-label">
-                                <input type="checkbox" id="toggle-worker-power" checked>
-                                <span class="slider-toggle"></span>
-                                <span class="toggle-text">Worker Service</span>
-                            </label>
-                        </div>
-                    </div>
+            <!-- WORKER COMPONENT VISIBILITY & DRAG-TO-SORT TOOLBAR -->
+            <div class="component-visibility-bar" id="worker-visibility-toolbar">
+                <span class="vis-toolbar-label">👁️ Show / Sort:</span>
+                <button class="toggle-chip-btn active" data-toggle-target="card-worker-chat" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>💬 Swarm Chat</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-worker" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>⚡ Worker Service</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-worker-logs" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>📜 Time Logs</span>
+                </button>
+                <button class="toggle-chip-btn active" data-toggle-target="card-worker-benchmark" draggable="true" title="Drag to reorder card">
+                    <span class="chip-drag-handle">⋮⋮</span>
+                    <span class="chip-dot"></span>
+                    <span>⚡ AI Rating</span>
+                </button>
+            </div>
 
-                    <!-- INCOMING CONNECTION INVITATION NOTIFICATION BANNER -->
-                    <div class="worker-invitation-banner" id="worker-invitation-banner" style="display: none;">
-                        <div class="invitation-header">
-                            <span class="invitation-icon">🔔</span>
-                            <div class="invitation-title">
-                                <strong>Incoming Host Connection Request!</strong>
-                                <span class="invitation-sub" id="invitation-host-text">Host Master @ 192.168.1.135</span>
+            <!-- DRAGGABLE WORKER CARDS CONTAINER -->
+            <div class="worker-cards-container host-cards-container" id="worker-cards-container">
+                <!-- 1. WORKER SWARM CHAT BOX (FIRST) -->
+                <div class="worker-card-item host-card-item" data-card-id="card-worker-chat">
+                    <div class="chat-panel glass-panel card-collapsible" id="card-worker-chat">
+                        <div class="chat-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <div class="chat-title-group">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <span class="pulse-dot"></span>
+                                <span id="worker-chat-active-model-title">Worker Swarm LLM Chat (Connected to Host Master)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="chat-speed-tag" id="worker-chat-speed">Stream Active</span>
+                                <button class="btn-card-toggle" data-toggle-target="card-worker-chat" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
                             </div>
                         </div>
-                        <div class="invitation-details" id="invitation-details-text">
-                            Model: Qwen2.5-0.5B-Instruct • Layers [0..11] (12 Layers)
-                        </div>
-                        <div class="invitation-actions">
-                            <button class="btn btn-accept" id="btn-accept-invitation">
-                                <span>✅ Accept Connection</span>
-                            </button>
-                            <button class="btn btn-reject" id="btn-reject-invitation">
-                                <span>❌ Reject</span>
-                            </button>
-                        </div>
-                    </div>
 
-                    <div class="worker-details-grid">
-                        <div class="worker-info-box">
-                            <span class="box-label">Node Identifier</span>
-                            <div class="box-val" id="worker-node-id">local_worker_edge</div>
-                        </div>
-                        <div class="worker-info-box">
-                            <span class="box-label">IP Address</span>
-                            <div class="box-val" id="worker-ip">--</div>
-                        </div>
-                        <div class="worker-info-box">
-                            <span class="box-label">TCP Streaming Port</span>
-                            <div class="box-val" id="worker-tcp-port">5555</div>
-                        </div>
-                        <div class="worker-info-box">
-                            <span class="box-label">Compute Device</span>
-                            <div class="box-val" id="worker-device">--</div>
-                        </div>
-                    </div>
+                        <div class="collapsible-body">
+                            <div class="chat-box-messages" id="worker-chat-messages-container" style="max-height: 240px; min-height: 160px;">
+                                <div class="chat-msg system">
+                                    👋 <strong>Worker Node Chat Active</strong>: Type a prompt here to run distributed pipeline inference across the LAN swarm and stream tokens directly back to this screen!
+                                </div>
+                            </div>
 
-                    <h3 class="sub-section-title">Local Hardware Capacity</h3>
-                    <div class="metric-progress-group">
-                        <div class="metric-header">
-                            <span>Available Memory (VRAM / RAM)</span>
-                            <span id="worker-mem-text">-- MB</span>
+                            <div class="chat-input-row">
+                                <input type="text" id="worker-chat-input-field" placeholder="Ask a question from this worker computer..." autocomplete="off">
+                                <button class="btn btn-primary btn-chat-send" id="btn-worker-chat-send">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                    <span>Send</span>
+                                </button>
+                            </div>
                         </div>
-                        <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" id="worker-mem-bar"></div>
-                        </div>
-                    </div>
-
-                    <div class="metric-progress-group">
-                        <div class="metric-header">
-                            <span>CPU Utilization</span>
-                            <span id="worker-cpu-text">-- %</span>
-                        </div>
-                        <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" id="worker-cpu-bar"></div>
-                        </div>
-                    </div>
-
-                    <div class="worker-slice-status-box">
-                        <div class="slice-header">
-                            <h4>Assigned Model Layer Slice</h4>
-                            <span class="slice-state-chip" id="worker-slice-state">IDLE</span>
-                        </div>
-                        <p id="worker-slice-text" style="color: var(--text-muted); margin-top: 6px;">Listening for Host Orchestrator model slice dispatch...</p>
-                    </div>
-
-                    <div class="worker-setting-row">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="toggle-auto-accept">
-                            <span>Auto-Accept Incoming Host Connections</span>
-                        </label>
                     </div>
                 </div>
 
-                <!-- Right: Connection History & Time Logs -->
-                <div class="worker-logs-card glass-panel">
-                    <div class="logs-header">
-                        <div class="logs-title">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                            <h3>Connection History & Time Logs</h3>
+                <!-- 2. WORKER CONTROL & HARDWARE INFO -->
+                <div class="worker-card-item host-card-item" data-card-id="card-worker">
+                    <div class="worker-card glass-panel card-collapsible" id="card-worker">
+                        <div class="worker-header">
+                            <div class="worker-status-group">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <div class="worker-badge online" id="worker-status-badge">⚡ Worker Node Active</div>
+                                <span id="worker-beacon-info" style="color: var(--text-muted); font-size: 0.8rem;">UDP Beacon: Port 59001</span>
+                            </div>
+                            <div class="worker-toggle-controls" style="display: flex; align-items: center; gap: 10px;">
+                                <label class="switch-control-label">
+                                    <input type="checkbox" id="toggle-worker-power" checked>
+                                    <span class="slider-toggle"></span>
+                                    <span class="toggle-text">Worker Service</span>
+                                </label>
+                                <button class="btn-card-toggle" data-toggle-target="card-worker" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
                         </div>
-                        <button class="btn-clear-logs" id="btn-clear-worker-logs">Clear Logs</button>
-                    </div>
 
-                    <div class="history-logs-container" id="worker-history-container">
-                        <!-- Rendered chronological time logs -->
+                        <div class="collapsible-body">
+                            <!-- INCOMING CONNECTION INVITATION NOTIFICATION BANNER -->
+                            <div class="worker-invitation-banner" id="worker-invitation-banner" style="display: none;">
+                                <div class="invitation-header">
+                                    <span class="invitation-icon">🔔</span>
+                                    <div class="invitation-title">
+                                        <strong>Incoming Host Connection Request!</strong>
+                                        <span class="invitation-sub" id="invitation-host-text">Host Master @ 192.168.1.135</span>
+                                    </div>
+                                </div>
+                                <div class="invitation-details" id="invitation-details-text">
+                                    Model: Qwen2.5-0.5B-Instruct • Layers [0..11] (12 Layers)
+                                </div>
+                                <div class="invitation-actions">
+                                    <button class="btn btn-accept" id="btn-accept-invitation">
+                                        <span>✅ Accept Connection</span>
+                                    </button>
+                                    <button class="btn btn-reject" id="btn-reject-invitation">
+                                        <span>❌ Reject</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="worker-details-grid">
+                                <div class="worker-info-box">
+                                    <span class="box-label">Node Identifier</span>
+                                    <div class="box-val" id="worker-node-id">local_worker_edge</div>
+                                </div>
+                                <div class="worker-info-box">
+                                    <span class="box-label">IP Address</span>
+                                    <div class="box-val" id="worker-ip">--</div>
+                                </div>
+                                <div class="worker-info-box">
+                                    <span class="box-label">TCP Streaming Port</span>
+                                    <div class="box-val" id="worker-tcp-port">5555</div>
+                                </div>
+                                <div class="worker-info-box">
+                                    <span class="box-label">Compute Device</span>
+                                    <div class="box-val" id="worker-device">--</div>
+                                </div>
+                            </div>
+
+                            <h3 class="sub-section-title">Local Hardware Capacity</h3>
+                            <div class="metric-progress-group">
+                                <div class="metric-header">
+                                    <span>Available Memory (VRAM / RAM)</span>
+                                    <span id="worker-mem-text">-- MB</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill" id="worker-mem-bar"></div>
+                                </div>
+                            </div>
+
+                            <div class="metric-progress-group">
+                                <div class="metric-header">
+                                    <span>CPU Utilization</span>
+                                    <span id="worker-cpu-text">-- %</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill" id="worker-cpu-bar"></div>
+                                </div>
+                            </div>
+
+                            <div class="worker-slice-status-box">
+                                <div class="slice-header">
+                                    <h4>Assigned Model Layer Slice</h4>
+                                    <span class="slice-state-chip" id="worker-slice-state">IDLE</span>
+                                </div>
+                                <p id="worker-slice-text" style="color: var(--text-muted); margin-top: 6px;">Listening for Host Orchestrator model slice dispatch...</p>
+                            </div>
+
+                            <div class="worker-setting-row">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="toggle-auto-accept">
+                                    <span>Auto-Accept Incoming Host Connections</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. CONNECTION HISTORY & TIME LOGS -->
+                <div class="worker-card-item host-card-item" data-card-id="card-worker-logs">
+                    <div class="worker-logs-card glass-panel card-collapsible" id="card-worker-logs">
+                        <div class="logs-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <div class="logs-title">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                <h3>Connection History & Time Logs</h3>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <button class="btn-clear-logs" id="btn-clear-worker-logs">Clear Logs</button>
+                                <button class="btn-card-toggle" data-toggle-target="card-worker-logs" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-body">
+                            <div class="history-logs-container" id="worker-history-container">
+                                <!-- Rendered chronological time logs -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. WORKER AI HARDWARE PERFORMANCE BENCHMARK & RATING CARD (LAST) -->
+                <div class="worker-card-item host-card-item" data-card-id="card-worker-benchmark">
+                    <div class="benchmark-card glass-panel card-collapsible" id="card-worker-benchmark">
+                        <div class="benchmark-header">
+                            <div class="benchmark-title-box">
+                                <span class="card-drag-handle" title="Drag card to reorder">⋮⋮</span>
+                                <div class="benchmark-icon-pulse">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                                </div>
+                                <div>
+                                    <h3>Worker AI Inference Performance & Rating</h3>
+                                    <span class="benchmark-subtext">Real-time local hardware benchmark & compute capability profiling</span>
+                                </div>
+                            </div>
+                            <div class="benchmark-actions">
+                                <span class="benchmark-badge" id="worker-bench-status-badge">Ready</span>
+                                <button class="btn btn-secondary btn-sm btn-prefill-decode-trigger" title="View Prefill & Decode Analytical Breakdown">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"></path></svg>
+                                    <span>📊 Chi tiết Prefill & Decode</span>
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="btn-worker-refresh-benchmark" title="Re-run AI Hardware Benchmark">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                    <span id="btn-worker-refresh-benchmark-text">⚡ Re-run Benchmark</span>
+                                </button>
+                                <button class="btn-card-toggle" data-toggle-target="card-worker-benchmark" title="Collapse / Expand Section">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-body">
+                            <div class="benchmark-grid">
+                                <div class="benchmark-summary-panel">
+                                    <div class="rating-tier-tag" id="worker-bench-tier-tag">Tier S (High Performance)</div>
+                                    <div class="rating-main-stat">
+                                        <span class="rating-number" id="worker-bench-tflops-val">0.00</span>
+                                        <span class="rating-unit">TFLOPs</span>
+                                    </div>
+                                    <div class="rating-meta">
+                                        <span id="worker-bench-device-name">Detecting Hardware...</span>
+                                        <span class="temp-stat" id="worker-bench-temp-val">🌡️ 45.0°C</span>
+                                    </div>
+                                </div>
+
+                                <div class="benchmark-subscores-grid">
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🖥️</span>
+                                            <span class="score-label">CPU Inference</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="worker-bench-cpu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🎮</span>
+                                            <span class="score-label">GPU Acceleration</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="worker-bench-gpu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card">
+                                        <div class="score-header">
+                                            <span class="score-icon">🧠</span>
+                                            <span class="score-label">NPU / Graph Engine</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="worker-bench-npu-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="score-card highlight">
+                                        <div class="score-header">
+                                            <span class="score-icon">🔥</span>
+                                            <span class="score-label">All-Hardware Peak</span>
+                                        </div>
+                                        <div class="score-value-box">
+                                            <span class="score-val" id="worker-bench-all-gflops">0.0</span>
+                                            <span class="score-unit">GFLOPs/s</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -319,21 +687,154 @@
             </div>
 
             <!-- Fleet Computers Management Table / Cards -->
-            <div class="fleet-list-panel glass-panel">
-                <div class="panel-header fleet-header-bar">
+            <div class="fleet-list-panel glass-panel card-collapsible" id="card-fleet">
+                <div class="panel-header fleet-header-bar" style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <h3>Connected Edge Computers Management</h3>
                         <span class="sub-text">Rename devices, toggle swarm inclusion on/off, or remove offline nodes</span>
                     </div>
+                    <button class="btn-card-toggle" data-toggle-target="card-fleet" title="Collapse / Expand Section">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
                 </div>
 
-                <div class="fleet-cards-grid" id="fleet-nodes-container">
-                    <!-- Rendered Fleet PC Cards with Rename, On/Off, Delete, Ping -->
+                <div class="collapsible-body">
+                    <div class="fleet-cards-grid" id="fleet-nodes-container">
+                        <!-- Rendered Fleet PC Cards with Rename, On/Off, Delete, Ping -->
+                    </div>
                 </div>
             </div>
         </main>
     </div>
 
-    <script src="/static/app.js"></script>
+    <!-- MODAL 1: PREFILL & DECODE ANALYTICAL BREAKDOWN MODAL -->
+    <div class="modal-backdrop" id="modal-prefill-decode" style="display: none;">
+        <div class="modal-dialog glass-panel">
+            <div class="modal-header">
+                <div class="modal-title-box">
+                    <div class="modal-icon">📊</div>
+                    <div>
+                        <h3>Prefill / Decode & KV-Cache Latency Modeling</h3>
+                        <span class="modal-subtitle">Analytical cost model & memory scaling for contiguous layer placement</span>
+                    </div>
+                </div>
+                <button class="btn-close-modal" id="btn-close-prefill-modal">✕</button>
+            </div>
+
+            <div class="modal-body">
+                <!-- 1. PREFILL ANALYSIS -->
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <h4>⚡ 1. Prefill Phase Breakdown ($T_{\text{prefill}}$ & TTFT)</h4>
+                        <span class="detail-badge compute-bound">Compute-Bound ($O(S^2)$)</span>
+                    </div>
+                    <div class="detail-table-wrapper">
+                        <table class="detail-table">
+                            <thead>
+                                <tr>
+                                    <th>Prompt Length ($S$)</th>
+                                    <th>Compute Work (GFLOPs)</th>
+                                    <th>Est. TTFT</th>
+                                    <th>Prefill Speed</th>
+                                    <th>Peak Activation Memory</th>
+                                </tr>
+                            </thead>
+                            <tbody id="prefill-table-body">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 2. DECODE ANALYSIS -->
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <h4>⏱️ 2. Decode Phase Breakdown ($T_{\text{decode}}$ / Token)</h4>
+                        <span class="detail-badge memory-bound" id="decode-bottleneck-badge">Memory-Bandwidth Bound</span>
+                    </div>
+                    <div class="metrics-stat-row" id="decode-stats-container">
+                        <div class="stat-pill">
+                            <span class="pill-label">1-Token FLOPs:</span>
+                            <span class="pill-val" id="decode-single-flops">0.98 GFLOPs</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="pill-label">Compute Latency:</span>
+                            <span class="pill-val" id="decode-compute-time">0.08 ms</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="pill-label">Mem Bandwidth Latency:</span>
+                            <span class="pill-val" id="decode-mem-time">9.80 ms</span>
+                        </div>
+                        <div class="stat-pill highlight">
+                            <span class="pill-label">Estimated Token Speed:</span>
+                            <span class="pill-val" id="decode-est-speed">102.0 tok/s</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. KV-CACHE SCALING TABLE -->
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <h4>🧠 3. KV-Cache Scaling by Context Length & Concurrency ($C$)</h4>
+                        <span class="detail-badge memory-bound">Dynamic Scaling</span>
+                    </div>
+                    <div class="detail-table-wrapper">
+                        <table class="detail-table">
+                            <thead>
+                                <tr>
+                                    <th>Context Window ($S_{\text{max}}$)</th>
+                                    <th>Concurrency $C=1$</th>
+                                    <th>Concurrency $C=2$</th>
+                                    <th>Concurrency $C=4$</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kv-cache-table-body">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 4. MODEL WORKING SET FORMULATION -->
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <h4>📦 4. Model Working Set Formulation ($M_{\text{working}} \le \text{Memory}_{\text{usable}} \times 0.90$)</h4>
+                    </div>
+                    <div class="working-set-formula-box">
+                        $$M_{\text{working}} = M_{\text{weights}} + M_{\text{peak\_act}} + M_{\text{KV-cache}} + M_{\text{runtime\_reserve}}$$
+                    </div>
+                    <div class="working-set-chips-grid" id="working-set-chips">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-close-prefill-modal-footer">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: NODE RATING & HARDWARE PROFILE MODAL -->
+    <div class="modal-backdrop" id="modal-node-detail" style="display: none;">
+        <div class="modal-dialog glass-panel">
+            <div class="modal-header">
+                <div class="modal-title-box">
+                    <div class="modal-icon" id="node-modal-icon">💻</div>
+                    <div>
+                        <h3 id="node-modal-title">Computer Hardware & AI Rating</h3>
+                        <span class="modal-subtitle" id="node-modal-subtitle">IP Address • Role in Swarm</span>
+                    </div>
+                </div>
+                <button class="btn-close-modal" id="btn-close-node-modal">✕</button>
+            </div>
+
+            <div class="modal-body" id="node-modal-body">
+                <!-- Dynamically populated per node clicked -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=20260827_09"></script>
 </body>
 </html>

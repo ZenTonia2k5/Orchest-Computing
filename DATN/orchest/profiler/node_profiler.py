@@ -1,6 +1,7 @@
 import os
 import platform
 import socket
+import subprocess
 import time
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Any
@@ -13,6 +14,45 @@ try:
     HAS_NVML = True
 except ImportError:
     HAS_NVML = False
+
+
+def get_accurate_cpu_model() -> str:
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            brand = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
+            if brand:
+                return brand
+        except Exception:
+            pass
+        try:
+            sp = subprocess.check_output(["system_profiler", "SPHardwareDataType"], text=True, timeout=1.5)
+            for line in sp.splitlines():
+                if "Chip:" in line:
+                    return line.split("Chip:", 1)[1].strip()
+                if "Processor Name:" in line:
+                    return line.split("Processor Name:", 1)[1].strip()
+        except Exception:
+            pass
+        return "Apple Silicon"
+    elif system == "Windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            brand, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+            if brand:
+                return brand.strip()
+        except Exception:
+            pass
+    elif system == "Linux":
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if "model name" in line:
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+    return platform.processor() or platform.machine()
 
 
 @dataclass
@@ -146,11 +186,23 @@ class NodeProfiler:
                 # Apple Silicon Unified Memory: Unified RAM is shared with GPU
                 unified_vram_total = ram.total / (1024 * 1024) * 0.75  # ~75% usable for Metal
                 unified_vram_free = ram.available / (1024 * 1024) * 0.75
+                chip_name = get_accurate_cpu_model()
+
+                # Estimated TFLOPs based on Apple chip:
+                est_tflops = 4.5
+                if "Max" in chip_name:
+                    est_tflops = 25.0
+                elif "Pro" in chip_name:
+                    est_tflops = 10.0
+                elif "Ultra" in chip_name:
+                    est_tflops = 50.0
+                elif "M3" in chip_name or "M2" in chip_name or "M1" in chip_name:
+                    est_tflops = 4.5
 
                 metrics.append(
                     GPUMetrics(
                         index=0,
-                        name=f"Apple Silicon ({platform.processor() or 'MPS'})",
+                        name=f"{chip_name} GPU (Metal MPS)",
                         vram_total_mb=round(unified_vram_total, 2),
                         vram_free_mb=round(unified_vram_free, 2),
                         vram_used_mb=round(unified_vram_total - unified_vram_free, 2),
@@ -158,7 +210,7 @@ class NodeProfiler:
                         temperature_c=None,
                         compute_capability="Metal",
                         device_type="mps",
-                        estimated_tflops=10.0,  # Avg M-series GPU FP16 TFLOPs
+                        estimated_tflops=est_tflops,
                     )
                 )
                 return metrics
@@ -169,7 +221,7 @@ class NodeProfiler:
         metrics.append(
             GPUMetrics(
                 index=0,
-                name="CPU Native Engine",
+                name=f"{get_accurate_cpu_model()} (CPU Engine)",
                 vram_total_mb=round(psutil.virtual_memory().total / (1024 * 1024), 2),
                 vram_free_mb=round(psutil.virtual_memory().available / (1024 * 1024), 2),
                 vram_used_mb=round(
@@ -200,7 +252,7 @@ class NodeProfiler:
             os_system=platform.system(),
             os_release=platform.release(),
             arch=platform.machine(),
-            cpu_model=platform.processor() or platform.machine(),
+            cpu_model=get_accurate_cpu_model(),
             cpu_cores_physical=psutil.cpu_count(logical=False) or 1,
             cpu_cores_logical=psutil.cpu_count(logical=True) or 1,
             cpu_frequency_mhz=round(freq_mhz, 2),
@@ -215,4 +267,3 @@ class NodeProfiler:
             status="READY",
             download_pct=100.0,
         )
-

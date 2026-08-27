@@ -28,6 +28,51 @@ document.addEventListener('DOMContentLoaded', () => {
         '#6366f1'  // indigo
     ];
 
+    function getTierInfo(tflops) {
+        const val = parseFloat(tflops) || 0.0;
+        if (val >= 25.0) {
+            return {
+                tier: 'Tier S+',
+                fullName: 'Tier S+ (Ultra Master)',
+                color: '#10B981',
+                bg: 'rgba(16, 185, 129, 0.18)',
+                border: 'rgba(16, 185, 129, 0.45)'
+            };
+        } else if (val >= 12.0) {
+            return {
+                tier: 'Tier S',
+                fullName: 'Tier S (High Performance)',
+                color: '#3B82F6',
+                bg: 'rgba(59, 130, 246, 0.18)',
+                border: 'rgba(59, 130, 246, 0.45)'
+            };
+        } else if (val >= 5.0) {
+            return {
+                tier: 'Tier A',
+                fullName: 'Tier A (Balanced Swarm)',
+                color: '#8B5CF6',
+                bg: 'rgba(139, 92, 246, 0.18)',
+                border: 'rgba(139, 92, 246, 0.45)'
+            };
+        } else if (val >= 1.0) {
+            return {
+                tier: 'Tier B',
+                fullName: 'Tier B (Edge Worker)',
+                color: '#F59E0B',
+                bg: 'rgba(245, 158, 11, 0.18)',
+                border: 'rgba(245, 158, 11, 0.45)'
+            };
+        } else {
+            return {
+                tier: 'Tier C',
+                fullName: 'Tier C (CPU Baseline)',
+                color: '#94A3B8',
+                bg: 'rgba(148, 163, 184, 0.18)',
+                border: 'rgba(148, 163, 184, 0.45)'
+            };
+        }
+    }
+
     // 1. Navigation Switcher (Host vs Worker vs Manage Fleet)
     const btnHost = document.getElementById('btn-mode-host');
     const btnWorker = document.getElementById('btn-mode-worker');
@@ -63,6 +108,51 @@ document.addEventListener('DOMContentLoaded', () => {
     btnHost.addEventListener('click', () => switchView('host'));
     btnWorker.addEventListener('click', () => switchView('worker'));
     btnManage.addEventListener('click', () => switchView('manage'));
+
+    // ---------------------------------------------------------
+    // Component Collapsible & Visibility Toolbar Handlers
+    // ---------------------------------------------------------
+    function syncVisibilityChips() {
+        document.querySelectorAll('.toggle-chip-btn').forEach(chip => {
+            const targetId = chip.getAttribute('data-toggle-target');
+            const targetEl = document.getElementById(targetId);
+            if (targetEl) {
+                if (targetEl.classList.contains('collapsed')) {
+                    chip.classList.remove('active');
+                } else {
+                    chip.classList.add('active');
+                }
+            }
+        });
+    }
+
+    // Toggle button on each card header
+    document.querySelectorAll('.btn-card-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const targetId = btn.getAttribute('data-toggle-target');
+            const targetEl = document.getElementById(targetId) || btn.closest('.card-collapsible');
+            if (targetEl) {
+                targetEl.classList.toggle('collapsed');
+                syncVisibilityChips();
+            }
+        });
+    });
+
+    // Show / Hide chips in toolbar
+    document.querySelectorAll('.toggle-chip-btn').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const targetId = chip.getAttribute('data-toggle-target');
+            const targetEl = document.getElementById(targetId);
+            if (targetEl) {
+                targetEl.classList.toggle('collapsed');
+                syncVisibilityChips();
+                if (!targetEl.classList.contains('collapsed')) {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }
+        });
+    });
 
     function updateHeaderStatus() {
         const activeNodes = currentClusterNodes.filter(n => n.enabled !== false);
@@ -469,60 +559,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 const displayName = getNodeDisplayName(n, idx);
 
                 const gpu = (n.gpus && n.gpus.length > 0) ? n.gpus[0] : null;
-                const vramFree = gpu ? gpu.vram_free_mb : n.ram_available_mb;
-                const vramTotal = gpu ? gpu.vram_total_mb : n.ram_total_mb;
-                const deviceName = gpu ? gpu.name : (n.cpu_model || 'CPU Native');
-
+                const devName = gpu ? gpu.name : (n.cpu_model || 'CPU Native');
                 const osIcon = getOsIcon(n.os_system);
-                const dlPct = n.download_pct !== undefined ? n.download_pct : 100;
-                const isDownloading = dlPct < 100;
-                const statusText = !isEnabled ? '⚪ Excluded from Swarm' : (isDownloading ? `Downloading (${dlPct}%)` : 'Ready');
-                const statusColor = !isEnabled ? 'var(--text-muted)' : (isDownloading ? 'var(--accent-cyan)' : 'var(--accent-emerald)');
+                const tflopsVal = gpu ? (gpu.estimated_tflops || 0.5) : (n.tflops || 0.2);
+                const tierInfo = getTierInfo(tflopsVal);
 
                 return `
-                    <div class="node-item-mini" style="border-left: 3px solid ${color}; opacity: ${isEnabled ? 1 : 0.6};">
-                        <div class="node-item-top">
-                            <div class="node-item-identity">
-                                <div class="node-os-tag">${osIcon} <span>${n.os_system || 'LAN'}</span></div>
-                                <div class="node-name">
-                                    <span style="color: ${color}; font-weight: 700;">${displayName}</span>
-                                </div>
-                                <div class="node-details">${n.ip_address} | ${deviceName}</div>
-                            </div>
-                            <div class="node-item-status">
-                                <span class="status-chip" style="background: ${statusColor}18; color: ${statusColor}; border: 1px solid ${statusColor}44;">
-                                    ${statusText}
-                                </span>
+                     <div class="node-card-minimal ${isEnabled ? '' : 'disabled-node'}" data-node-id="${n.node_id}" style="border-left: 4px solid ${color};" title="Click to view Hardware Specs">
+                        <div class="node-name-group" style="display: flex; align-items: center; gap: 12px;">
+                            <span class="os-icon" style="font-size: 1.4rem;">${osIcon}</span>
+                            <div>
+                                <h4 class="node-name" style="margin: 0; font-size: 0.96rem; font-weight: 700; color: #f8fafc;">${displayName}</h4>
+                                <span class="node-ip" style="font-size: 0.76rem; color: var(--text-muted);">${n.ip_address || '127.0.0.1'} • ${devName}</span>
                             </div>
                         </div>
-
-                        <div class="node-item-hardware-row">
-                            <div class="hw-item">
-                                <span class="hw-label">Memory</span>
-                                <span class="hw-val">${vramFree} / ${vramTotal} MB</span>
-                            </div>
-                            <div class="hw-item">
-                                <span class="hw-label">CPU Usage</span>
-                                <span class="hw-val">${n.cpu_usage_pct || 0}%</span>
-                            </div>
-                            <div class="hw-item">
-                                <span class="hw-label">TFLOPs</span>
-                                <span class="hw-val">${gpu ? gpu.estimated_tflops : '0.2'}</span>
-                            </div>
-                        </div>
-
-                        <div class="node-readiness-wrapper">
-                            <div class="readiness-header">
-                                <span class="readiness-label">${isDownloading ? '📥 Downloading Slice Weights' : (isEnabled ? '✅ Swarm Node Active' : '⚪ Excluded in Fleet Tab')}</span>
-                                <span class="readiness-pct">${isEnabled ? dlPct + '%' : 'Off'}</span>
-                            </div>
-                            <div class="readiness-bar-bg">
-                                <div class="readiness-bar-fill ${isDownloading ? 'downloading' : ''}" style="width: ${isEnabled ? dlPct : 0}%; background: ${color};"></div>
-                            </div>
+                        <div class="node-status-badges" style="display: flex; align-items: center; gap: 8px;">
+                            <span class="badge ${isEnabled ? 'badge-online' : 'badge-offline'}">${isEnabled ? '🟢 Connected' : '⚪ Disabled'}</span>
+                            <button class="node-tier-btn" data-node-id="${n.node_id}" style="background: ${tierInfo.bg}; color: ${tierInfo.color}; border-color: ${tierInfo.border};" title="Click to view detailed AI Rating & Prefill/Decode metrics">
+                                ⚡ ${tierInfo.tier} (${typeof tflopsVal === 'number' ? tflopsVal.toFixed(1) : tflopsVal} TFLOPs)
+                            </button>
+                            <span class="node-click-pill" title="Click to view CPU, RAM & Hardware Specs">🔍 Specs</span>
                         </div>
                     </div>
                 `;
             }).join('');
+
+            // Click node card -> Open Hardware Specs modal
+            nodesList.querySelectorAll('.node-card-minimal').forEach(card => {
+                card.addEventListener('click', () => {
+                    const nid = card.getAttribute('data-node-id');
+                    openNodeDetailModal(nid);
+                });
+            });
+
+            // Click Rating Tier button -> Open AI Rating & Prefill/Decode modal
+            nodesList.querySelectorAll('.node-tier-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const nid = btn.getAttribute('data-node-id');
+                    openPrefillDecodeModal(nid);
+                });
+            });
         }
 
         // Render Slice Flow List
@@ -832,6 +909,59 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') sendChatPrompt();
     });
 
+    // Worker Mode Chat Box Prompting (Worker -> Host Swarm Pipeline)
+    const workerChatInput = document.getElementById('worker-chat-input-field');
+    const btnWorkerSend = document.getElementById('btn-worker-chat-send');
+    const workerChatMessages = document.getElementById('worker-chat-messages-container');
+
+    async function sendWorkerChatPrompt() {
+        if (!workerChatInput) return;
+        const text = workerChatInput.value.trim();
+        if (!text) return;
+
+        workerChatInput.value = '';
+
+        const userMsg = document.createElement('div');
+        userMsg.className = 'chat-msg user';
+        userMsg.innerText = text;
+        workerChatMessages.appendChild(userMsg);
+
+        const assistantMsg = document.createElement('div');
+        assistantMsg.className = 'chat-msg assistant';
+        assistantMsg.innerText = 'Streaming tokens across LAN swarm pipeline...';
+        workerChatMessages.appendChild(assistantMsg);
+
+        workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
+        const startTime = Date.now();
+
+        try {
+            const res = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: text, max_tokens: 64 })
+            });
+
+            const data = await res.json();
+            const formattedText = (data.text || '').replace(/\n/g, '<br>');
+            assistantMsg.innerHTML = formattedText;
+            workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
+
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            const tokSec = ((data.tokens_generated || 64) / (parseFloat(elapsed) || 1)).toFixed(1);
+            const speedEl = document.getElementById('worker-chat-speed');
+            if (speedEl) speedEl.innerText = `${tokSec} tok/s | ${elapsed}s (${data.tokens_generated || 64} tokens)`;
+        } catch (err) {
+            assistantMsg.innerText = 'Failed to communicate with Swarm Host Master.';
+        }
+    }
+
+    if (btnWorkerSend && workerChatInput) {
+        btnWorkerSend.addEventListener('click', sendWorkerChatPrompt);
+        workerChatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendWorkerChatPrompt();
+        });
+    }
+
     // ---------------------------------------------------------
     // 8. WORKER MODE: Metrics, Connection Authorization & Time Logs
     // ---------------------------------------------------------
@@ -1090,13 +1220,13 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }).join('');
 
-        // Attach event listeners for Save Alias
+        // Attach event listeners for Save Alias (Button click & Enter key)
         container.querySelectorAll('.btn-save-alias').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const nodeId = e.currentTarget.getAttribute('data-node-id');
-                const input = document.getElementById(`alias-input-${nodeId}`);
-                const newAlias = input ? input.value.trim() : '';
+            const nodeId = btn.getAttribute('data-node-id');
+            const input = document.getElementById(`alias-input-${nodeId}`);
 
+            const doSave = async () => {
+                const newAlias = input ? input.value.trim() : '';
                 await fetch('/api/node/update', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1105,7 +1235,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.innerText = '✅ Saved';
                 setTimeout(() => { btn.innerText = '💾 Save'; }, 1500);
                 fetchCluster();
-            });
+            };
+
+            btn.addEventListener('click', doSave);
+            if (input) {
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        doSave();
+                    }
+                });
+            }
         });
 
         // Attach event listeners for On/Off Toggle
@@ -1165,11 +1305,655 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Auto-poll cluster every 2 seconds
+    // ---------------------------------------------------------
+    // AI Hardware Performance Benchmark & Rating Handler
+    // ---------------------------------------------------------
+    const btnRefreshBench = document.getElementById('btn-refresh-benchmark');
+    const benchStatusBadge = document.getElementById('benchmark-status-badge');
+    const benchTierTag = document.getElementById('bench-tier-tag');
+    const benchTflopsVal = document.getElementById('bench-tflops-val');
+    const benchDeviceName = document.getElementById('bench-device-name');
+    const benchTempVal = document.getElementById('bench-temp-val');
+    const benchCpuGflops = document.getElementById('bench-cpu-gflops');
+    const benchGpuGflops = document.getElementById('bench-gpu-gflops');
+    const benchNpuGflops = document.getElementById('bench-npu-gflops');
+    const benchAllGflops = document.getElementById('bench-all-gflops');
+
+    // Worker Mode Benchmark Elements
+    const btnWorkerRefreshBench = document.getElementById('btn-worker-refresh-benchmark');
+    const workerBenchStatusBadge = document.getElementById('worker-bench-status-badge');
+    const workerBenchTierTag = document.getElementById('worker-bench-tier-tag');
+    const workerBenchTflopsVal = document.getElementById('worker-bench-tflops-val');
+    const workerBenchDeviceName = document.getElementById('worker-bench-device-name');
+    const workerBenchTempVal = document.getElementById('worker-bench-temp-val');
+    const workerBenchCpuGflops = document.getElementById('worker-bench-cpu-gflops');
+    const workerBenchGpuGflops = document.getElementById('worker-bench-gpu-gflops');
+    const workerBenchNpuGflops = document.getElementById('worker-bench-npu-gflops');
+    const workerBenchAllGflops = document.getElementById('worker-bench-all-gflops');
+
+    let isBenchmarking = false;
+    let latestBenchmarkData = null;
+
+    async function fetchHardwareBenchmark() {
+        try {
+            const res = await fetch('/api/benchmark/rating');
+            if (!res.ok) return;
+            const data = await res.json();
+            latestBenchmarkData = data;
+
+            const isRunning = data.status === 'RUNNING';
+            isBenchmarking = isRunning;
+
+            // Host badge & button
+            if (benchStatusBadge) {
+                benchStatusBadge.innerText = isRunning ? '⚡ Testing...' : (data.status === 'READY' ? 'Ready' : 'Standby');
+                benchStatusBadge.className = `benchmark-badge ${isRunning ? 'running' : 'ready'}`;
+            }
+            if (btnRefreshBench) {
+                btnRefreshBench.disabled = isRunning;
+                btnRefreshBench.querySelector('span').innerText = isRunning ? 'Running...' : '⚡ Re-run Benchmark';
+            }
+
+            // Worker badge & button
+            if (workerBenchStatusBadge) {
+                workerBenchStatusBadge.innerText = isRunning ? '⚡ Testing...' : (data.status === 'READY' ? 'Ready' : 'Standby');
+                workerBenchStatusBadge.className = `benchmark-badge ${isRunning ? 'running' : 'ready'}`;
+            }
+            if (btnWorkerRefreshBench) {
+                btnWorkerRefreshBench.disabled = isRunning;
+                btnWorkerRefreshBench.querySelector('span').innerText = isRunning ? 'Running...' : '⚡ Re-run Benchmark';
+            }
+
+            if (data.status === 'READY' || data.scores) {
+                const tflopsNum = parseFloat(data.estimated_tflops || 0);
+                const tierInfo = getTierInfo(tflopsNum);
+                const tflops = tflopsNum.toFixed(2);
+                const devName = data.hardware_info ? `${data.hardware_info.gpu_name || data.hardware_info.cpu_name} (${data.hardware_info.cpu_cores} Cores)` : 'Detecting...';
+                const tempStr = data.temperatures ? `🌡️ ${data.temperatures.start_c}°C ➔ ${data.temperatures.end_c}°C${data.temperatures.delta_c > 0 ? ` (+${data.temperatures.delta_c}°C)` : ''}` : '🌡️ 45.0°C';
+
+                // Update Host UI
+                if (benchTierTag) {
+                    benchTierTag.innerText = tierInfo.fullName;
+                    benchTierTag.style.background = tierInfo.bg;
+                    benchTierTag.style.color = tierInfo.color;
+                    benchTierTag.style.borderColor = tierInfo.border;
+                }
+                if (benchTflopsVal) benchTflopsVal.innerText = tflops;
+                if (benchDeviceName) benchDeviceName.innerText = devName;
+                if (benchTempVal) benchTempVal.innerText = tempStr;
+                if (benchCpuGflops) benchCpuGflops.innerText = (data.scores?.cpu_gflops || 0).toLocaleString();
+                if (benchGpuGflops) benchGpuGflops.innerText = (data.scores?.gpu_gflops || 0).toLocaleString();
+                if (benchNpuGflops) benchNpuGflops.innerText = (data.scores?.npu_gflops || 0).toLocaleString();
+                if (benchAllGflops) benchAllGflops.innerText = (data.scores?.all_gflops || 0).toLocaleString();
+
+                // Update Worker UI
+                if (workerBenchTierTag) {
+                    workerBenchTierTag.innerText = tierInfo.fullName;
+                    workerBenchTierTag.style.background = tierInfo.bg;
+                    workerBenchTierTag.style.color = tierInfo.color;
+                    workerBenchTierTag.style.borderColor = tierInfo.border;
+                }
+                if (workerBenchTflopsVal) workerBenchTflopsVal.innerText = tflops;
+                if (workerBenchDeviceName) workerBenchDeviceName.innerText = devName;
+                if (workerBenchTempVal) workerBenchTempVal.innerText = tempStr;
+                if (workerBenchCpuGflops) workerBenchCpuGflops.innerText = (data.scores?.cpu_gflops || 0).toLocaleString();
+                if (workerBenchGpuGflops) workerBenchGpuGflops.innerText = (data.scores?.gpu_gflops || 0).toLocaleString();
+                if (workerBenchNpuGflops) workerBenchNpuGflops.innerText = (data.scores?.npu_gflops || 0).toLocaleString();
+                if (workerBenchAllGflops) workerBenchAllGflops.innerText = (data.scores?.all_gflops || 0).toLocaleString();
+            }
+        } catch (err) {
+            console.warn('Failed to fetch hardware benchmark:', err);
+        }
+    }
+
+    async function triggerBenchmarkRefresh() {
+        if (isBenchmarking) return;
+        try {
+            isBenchmarking = true;
+            if (btnRefreshBench) {
+                btnRefreshBench.disabled = true;
+                btnRefreshBench.querySelector('span').innerText = 'Starting...';
+            }
+            if (btnWorkerRefreshBench) {
+                btnWorkerRefreshBench.disabled = true;
+                btnWorkerRefreshBench.querySelector('span').innerText = 'Starting...';
+            }
+            await fetch('/api/benchmark/refresh', { method: 'POST' });
+            setTimeout(fetchHardwareBenchmark, 800);
+        } catch (err) {
+            console.error('Failed to trigger benchmark refresh:', err);
+            isBenchmarking = false;
+        }
+    }
+
+    if (btnRefreshBench) btnRefreshBench.addEventListener('click', triggerBenchmarkRefresh);
+    if (btnWorkerRefreshBench) btnWorkerRefreshBench.addEventListener('click', triggerBenchmarkRefresh);
+
+    // ---------------------------------------------------------
+    // Modals: Prefill / Decode Breakdown & Node Detail Viewers
+    // ---------------------------------------------------------
+    const modalPrefill = document.getElementById('modal-prefill-decode');
+    const modalNode = document.getElementById('modal-node-detail');
+
+    // Close Modal buttons
+    ['btn-close-prefill-modal', 'btn-close-prefill-modal-footer'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('click', () => { if (modalPrefill) modalPrefill.style.display = 'none'; });
+    });
+
+    ['btn-close-node-modal', 'btn-close-node-modal-footer'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('click', () => { if (modalNode) modalNode.style.display = 'none'; });
+    });
+
+    // Close modal on backdrop click
+    [modalPrefill, modalNode].forEach(m => {
+        if (m) {
+            m.addEventListener('click', (e) => {
+                if (e.target === m) m.style.display = 'none';
+            });
+        }
+    });
+
+    function populatePrefillDecodeModal(breakdown) {
+        if (!breakdown) return;
+
+        // 1. Prefill table
+        const prefillTbody = document.getElementById('prefill-table-body');
+        if (prefillTbody && breakdown.prefill_analysis) {
+            prefillTbody.innerHTML = breakdown.prefill_analysis.map(p => `
+                <tr>
+                    <td><strong>${p.prompt_len}</strong> tokens</td>
+                    <td>${p.flops_gflops} GFLOPs</td>
+                    <td style="color: var(--accent-cyan); font-weight: 600;">${p.ttft_ms} ms</td>
+                    <td style="color: var(--accent-emerald); font-weight: 600;">${p.throughput_tok_s} tok/s</td>
+                    <td>${p.peak_act_mb} MB</td>
+                </tr>
+            `).join('');
+        }
+
+        // 2. Decode Stats
+        if (breakdown.decode_analysis) {
+            const dec = breakdown.decode_analysis;
+            const singleFlops = document.getElementById('decode-single-flops');
+            const compTime = document.getElementById('decode-compute-time');
+            const memTime = document.getElementById('decode-mem-time');
+            const estSpeed = document.getElementById('decode-est-speed');
+            const badge = document.getElementById('decode-bottleneck-badge');
+
+            if (singleFlops) singleFlops.innerText = `${dec.single_token_flops_m} MFLOPs`;
+            if (compTime) compTime.innerText = `${dec.compute_time_ms} ms`;
+            if (memTime) memTime.innerText = `${dec.memory_time_ms} ms`;
+            if (estSpeed) estSpeed.innerText = `${dec.decode_speed_tok_s} tok/s (${dec.decode_latency_ms} ms/tok)`;
+            if (badge) {
+                badge.innerText = dec.bottleneck_mode;
+                badge.className = `detail-badge ${dec.bottleneck_mode.toLowerCase().includes('compute') ? 'compute-bound' : 'memory-bound'}`;
+            }
+        }
+
+        // 3. KV-Cache Table
+        const kvTbody = document.getElementById('kv-cache-table-body');
+        if (kvTbody && breakdown.kv_cache_scaling) {
+            kvTbody.innerHTML = breakdown.kv_cache_scaling.map(k => `
+                <tr>
+                    <td><strong>${k.context_len}</strong> tokens</td>
+                    <td>${k.kv_cache_c1_mb} MB</td>
+                    <td>${k.kv_cache_c2_mb} MB</td>
+                    <td><strong style="color: var(--accent-cyan);">${k.kv_cache_c4_mb} MB</strong></td>
+                </tr>
+            `).join('');
+        }
+
+        // 4. Working Set Chips
+        const wsContainer = document.getElementById('working-set-chips');
+        if (wsContainer && breakdown.working_set) {
+            const ws = breakdown.working_set;
+            wsContainer.innerHTML = `
+                <div class="ws-chip">
+                    <span class="ws-chip-label">Weights ($M_{\\text{weights}}$)</span>
+                    <span class="ws-chip-val">${ws.weights_mb} MB</span>
+                </div>
+                <div class="ws-chip">
+                    <span class="ws-chip-label">Peak Activation ($M_{\\text{act}}$)</span>
+                    <span class="ws-chip-val">${ws.peak_act_mb} MB</span>
+                </div>
+                <div class="ws-chip">
+                    <span class="ws-chip-label">KV-Cache ($M_{\\text{KV}}$)</span>
+                    <span class="ws-chip-val">${ws.kv_cache_mb} MB</span>
+                </div>
+                <div class="ws-chip">
+                    <span class="ws-chip-label">Runtime Reserve</span>
+                    <span class="ws-chip-val">${ws.runtime_reserve_mb} MB</span>
+                </div>
+                <div class="ws-chip" style="border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.15);">
+                    <span class="ws-chip-label" style="color: var(--accent-cyan);">Total Working Set</span>
+                    <span class="ws-chip-val" style="color: #38bdf8;">${ws.total_working_set_mb} MB</span>
+                </div>
+            `;
+        }
+    }
+
+    // Open Prefill & Decode Modal (Global or for a specific Node)
+    function openPrefillDecodeModal(nodeId) {
+        let breakdown = null;
+        if (latestBenchmarkData && latestBenchmarkData.breakdown) {
+            breakdown = JSON.parse(JSON.stringify(latestBenchmarkData.breakdown));
+        }
+
+        if (nodeId && currentClusterNodes) {
+            const node = currentClusterNodes.find(n => n.node_id === nodeId);
+            if (node && breakdown) {
+                const gpu = (node.gpus && node.gpus.length > 0) ? node.gpus[0] : null;
+                const tflops = gpu ? gpu.estimated_tflops : (node.tflops || 0.5);
+                const scale = Math.max(0.15, tflops / 2.0);
+
+                // Scale analytical timings for this specific machine
+                if (breakdown.prefill) {
+                    if (breakdown.prefill.prompt_len_128) breakdown.prefill.prompt_len_128.total_ms = (parseFloat(breakdown.prefill.prompt_len_128.total_ms || 20) / scale).toFixed(2);
+                    if (breakdown.prefill.prompt_len_512) breakdown.prefill.prompt_len_512.total_ms = (parseFloat(breakdown.prefill.prompt_len_512.total_ms || 80) / scale).toFixed(2);
+                    if (breakdown.prefill.prompt_len_1024) breakdown.prefill.prompt_len_1024.total_ms = (parseFloat(breakdown.prefill.prompt_len_1024.total_ms || 180) / scale).toFixed(2);
+                }
+                if (breakdown.decode) {
+                    breakdown.decode.single_token_ms = (parseFloat(breakdown.decode.single_token_ms || 15) / scale).toFixed(2);
+                    breakdown.decode.tokens_per_sec = (parseFloat(breakdown.decode.tokens_per_sec || 65) * scale).toFixed(1);
+                }
+                if (breakdown.hardware) {
+                    breakdown.hardware.device = `${node.alias || node.node_id} (${gpu ? gpu.name : (node.cpu_model || 'CPU')})`;
+                    breakdown.hardware.measured_tflops = tflops.toFixed(2);
+                }
+            }
+        }
+
+        if (breakdown) {
+            populatePrefillDecodeModal(breakdown);
+        }
+        if (modalPrefill) modalPrefill.style.display = 'flex';
+    }
+
+    // Attach click listeners for "Chi tiết Prefill & Decode" buttons
+    document.querySelectorAll('.btn-prefill-decode-trigger, #btn-show-prefill-decode').forEach(btn => {
+        btn.addEventListener('click', () => {
+            openPrefillDecodeModal();
+        });
+    });
+
+    // Open Node Detail Modal
+    function openNodeDetailModal(nodeId) {
+        const node = currentClusterNodes.find(n => n.node_id === nodeId);
+        if (!node) return;
+
+        const gpu = (node.gpus && node.gpus.length > 0) ? node.gpus[0] : null;
+        const osIcon = getOsIcon(node.os_system);
+        const memTotal = gpu ? (gpu.vram_total_mb || 0) : (node.ram_total_mb || 0);
+        const memFree = gpu ? (gpu.vram_free_mb || 0) : (node.ram_available_mb || 0);
+        const tflops = gpu ? (gpu.estimated_tflops || 0.5) : (node.tflops || 0.5);
+
+        const tierInfo = getTierInfo(tflops);
+
+        const isMac = (node.os_system && (node.os_system.toLowerCase().includes('darwin') || node.os_system.toLowerCase().includes('mac'))) || (node.arch && node.arch.toLowerCase().includes('arm')) || (node.cpu_model && node.cpu_model.toLowerCase().includes('apple'));
+        const driverName = isMac ? 'Apple Metal (PyTorch MPS)' : (gpu && gpu.device_type === 'cuda' ? 'NVIDIA CUDA' : 'CPU Native / ROCm');
+        const cpuDisplayName = node.cpu_model || (isMac ? 'Apple Silicon (M-Series)' : 'Native CPU');
+        const gpuDisplayName = gpu ? gpu.name : (isMac ? `${cpuDisplayName} GPU (MPS)` : 'CPU Native Engine');
+        const osDisplayName = isMac ? `macOS (${node.arch || 'arm64'})` : `${node.os_system} (${node.arch || 'x86_64'})`;
+
+        const modalIcon = document.getElementById('node-modal-icon');
+        const modalTitle = document.getElementById('node-modal-title');
+        const modalSub = document.getElementById('node-modal-subtitle');
+        const modalBody = document.getElementById('node-modal-body');
+
+        if (modalIcon) modalIcon.innerText = osIcon;
+        if (modalTitle) modalTitle.innerText = `${node.alias || node.hostname || node.node_id}`;
+        if (modalSub) modalSub.innerText = `IP: ${node.ip_address} • Node ID: ${node.node_id}`;
+
+        if (modalBody) {
+            modalBody.innerHTML = `
+                <div class="benchmark-grid" style="margin-bottom: 16px;">
+                    <!-- Clickable Rank & AI Summary Card -->
+                    <div class="benchmark-summary-panel clickable-rank-panel" id="modal-rank-summary-${node.node_id}" style="cursor: pointer; border: 1px solid ${tierInfo.border}; background: ${tierInfo.bg}; transition: all 0.2s ease;" title="Click to view full AI Rating & Prefill/Decode breakdown">
+                        <div class="rating-tier-tag" style="background: ${tierInfo.color}25; color: ${tierInfo.color}; border-color: ${tierInfo.border}; font-weight: 700;">
+                            ${tierInfo.fullName}
+                        </div>
+                        <div class="rating-main-stat">
+                            <span class="rating-number">${tflops.toFixed(2)}</span>
+                            <span class="rating-unit">TFLOPs</span>
+                        </div>
+                        <div class="rating-meta">
+                            <span>${gpuDisplayName}</span>
+                            <span class="temp-stat">🌡️ ${gpu && gpu.temperature_c ? gpu.temperature_c + '°C' : '45.0°C'}</span>
+                        </div>
+                        <div class="rating-click-hint" style="margin-top: 8px; font-size: 0.72rem; color: var(--accent-cyan); display: flex; align-items: center; justify-content: center; gap: 4px;">
+                            <span>⚡ Click to view Prefill & Decode breakdown ➔</span>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Hardware Specifications Subscores Grid -->
+                    <div class="benchmark-subscores-grid">
+                        <div class="score-card">
+                            <div class="score-header"><span class="score-icon">🖥️</span><span class="score-label">CPU Processor</span></div>
+                            <div class="score-value-box"><span class="score-val" style="font-size: 0.95rem; font-weight: 700; color: #f8fafc;">${cpuDisplayName}</span><span class="score-unit">${node.cpu_cores_physical || 4} Physical / ${node.cpu_cores_logical || 8} Logical (${node.cpu_usage_pct || 0}% Load)</span></div>
+                        </div>
+                        <div class="score-card">
+                            <div class="score-header"><span class="score-icon">🎮</span><span class="score-label">GPU / Acceleration</span></div>
+                            <div class="score-value-box"><span class="score-val" style="font-size: 0.95rem; font-weight: 700; color: #38bdf8;">${gpuDisplayName}</span><span class="score-unit">${tflops.toFixed(1)} Peak TFLOPs • Driver: ${driverName}</span></div>
+                        </div>
+                        <div class="score-card">
+                            <div class="score-header"><span class="score-icon">🧠</span><span class="score-label">RAM / VRAM Pool</span></div>
+                            <div class="score-value-box"><span class="score-val" style="font-size: 1.05rem; font-weight: 700; color: var(--accent-cyan);">${memFree.toFixed(0)} MB Free</span><span class="score-unit">of ${memTotal.toFixed(0)} MB Total Pool</span></div>
+                        </div>
+                        <div class="score-card highlight">
+                            <div class="score-header"><span class="score-icon">🌐</span><span class="score-label">System & Network Role</span></div>
+                            <div class="score-value-box"><span class="score-val" style="font-size: 0.95rem; font-weight: 700;">${osDisplayName}</span><span class="score-unit">IP: ${node.ip_address} • Port: ${node.tcp_port || 5555} (${node.enabled !== false ? 'Active' : 'Disabled'})</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="detail-section" style="margin-top: 12px;">
+                    <div class="detail-section-header">
+                        <h4>⚡ Estimated Layer Throughput on this Device</h4>
+                        <span class="detail-badge compute-bound">Batch Size B=1</span>
+                    </div>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; margin: 0;">
+                        This computer is capable of processing up to <strong>${(tflops * 15.2).toFixed(1)} tokens/s</strong> in Prefill phase and <strong>${Math.min(120, tflops * 25.0).toFixed(1)} tokens/s</strong> in Decode phase with an estimated local working set limit of <strong>${(memFree * 0.9).toFixed(0)} MB</strong>.
+                    </p>
+                </div>
+            `;
+
+            // Attach interactive click listener inside modal
+            const rankPanel = document.getElementById(`modal-rank-summary-${node.node_id}`);
+            if (rankPanel) {
+                rankPanel.addEventListener('click', () => {
+                    if (modalNode) modalNode.style.display = 'none';
+                    openPrefillDecodeModal(node.node_id);
+                });
+            }
+        }
+
+        if (modalNode) modalNode.style.display = 'flex';
+    }
+
+    // ---------------------------------------------------------
+    // Swarm Inference Engine Power Switch & Periodic Benchmark Handler
+    // ---------------------------------------------------------
+    const btnToggleEngine = document.getElementById('btn-toggle-engine');
+    const enginePowerIcon = document.getElementById('btn-engine-power-icon');
+    const enginePowerText = document.getElementById('btn-engine-power-text');
+    const engineStateDot = document.getElementById('engine-state-dot');
+    const engineStatusTitle = document.getElementById('engine-status-title');
+    const engineStatusChip = document.getElementById('engine-status-chip');
+    const engineCountdownText = document.getElementById('engine-countdown-text');
+
+    let currentEngineEnabled = false;
+
+    function formatTimeRemaining(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+    }
+
+    async function fetchEngineStatus() {
+        try {
+            const res = await fetch('/api/engine/status');
+            if (!res.ok) return;
+            const data = await res.json();
+            currentEngineEnabled = !!data.enabled;
+
+            if (currentEngineEnabled) {
+                if (engineStateDot) engineStateDot.className = 'engine-state-dot running';
+                if (engineStatusTitle) engineStatusTitle.innerText = 'Swarm Inference Engine: ACTIVE';
+                if (engineStatusChip) {
+                    engineStatusChip.innerText = 'Running (Serving)';
+                    engineStatusChip.className = 'engine-mode-chip running';
+                }
+                if (engineCountdownText) {
+                    engineCountdownText.innerHTML = `🟢 <strong>Distributed Inference Active</strong>: Serving real-time LLM prompts • Auto-Benchmark is <em>paused</em>.`;
+                }
+                if (btnToggleEngine) {
+                    btnToggleEngine.className = 'btn btn-engine-power active';
+                    if (enginePowerIcon) enginePowerIcon.innerText = '⏸️';
+                    if (enginePowerText) enginePowerText.innerText = 'Stop / Standby Mode';
+                }
+            } else {
+                const remainingSec = data.next_benchmark_countdown_sec !== undefined ? data.next_benchmark_countdown_sec : 300;
+                const formattedTime = formatTimeRemaining(remainingSec);
+
+                if (engineStateDot) engineStateDot.className = 'engine-state-dot standby';
+                if (engineStatusTitle) engineStatusTitle.innerText = 'Swarm Inference Engine: STANDBY';
+                if (engineStatusChip) {
+                    engineStatusChip.innerText = 'Standby (Idle)';
+                    engineStatusChip.className = 'engine-mode-chip standby';
+                }
+                if (engineCountdownText) {
+                    engineCountdownText.innerHTML = `Auto-Benchmark is <strong>ACTIVE</strong>: re-running hardware rating every 5 mins (Next run in <span style="color: #fbbf24; font-weight: 700;">${formattedTime}</span>)`;
+                }
+                if (btnToggleEngine) {
+                    btnToggleEngine.className = 'btn btn-engine-power';
+                    if (enginePowerIcon) enginePowerIcon.innerText = '▶️';
+                    if (enginePowerText) enginePowerText.innerText = 'Start Swarm Inference';
+                }
+            }
+        } catch (err) {
+            console.warn('Failed to fetch engine status:', err);
+        }
+    }
+
+    if (btnToggleEngine) {
+        btnToggleEngine.addEventListener('click', async () => {
+            try {
+                btnToggleEngine.disabled = true;
+                const targetState = !currentEngineEnabled;
+                await fetch('/api/engine/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: targetState })
+                });
+                await fetchEngineStatus();
+            } catch (err) {
+                console.error('Failed to toggle engine power:', err);
+            } finally {
+                btnToggleEngine.disabled = false;
+            }
+        });
+    }
+
+    // ---------------------------------------------------------
+    // Drag to Sort Host Cards & Toolbar Chips
+    // ---------------------------------------------------------
+    const DEFAULT_CARD_ORDER = [
+        'card-chat',
+        'card-visual-map',
+        'card-host-controls',
+        'card-swarm-topology',
+        'card-benchmark'
+    ];
+
+    const DEFAULT_WORKER_CARD_ORDER = [
+        'card-worker-chat',
+        'card-worker',
+        'card-worker-logs',
+        'card-worker-benchmark'
+    ];
+
+    function getSavedCardOrder() {
+        try {
+            const saved = localStorage.getItem('orchest_card_order');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed) && parsed.length > 0 && parsed.includes('card-chat')) {
+                    // Check if it's the old default, if so upgrade to new order
+                    if (parsed[2] === 'card-swarm-topology' && parsed[3] === 'card-host-controls') {
+                        return DEFAULT_CARD_ORDER;
+                    }
+                    return parsed;
+                }
+            }
+        } catch (e) {}
+        return DEFAULT_CARD_ORDER;
+    }
+
+    function saveCardOrder(order) {
+        try {
+            localStorage.setItem('orchest_card_order', JSON.stringify(order));
+        } catch (e) {}
+    }
+
+    function applyCardOrder(order) {
+        const cardsContainer = document.getElementById('host-cards-container');
+        const toolbar = document.getElementById('visibility-toolbar');
+        if (!cardsContainer || !toolbar) return;
+
+        order.forEach(cardId => {
+            const cardEl = cardsContainer.querySelector(`.host-card-item[data-card-id="${cardId}"]`);
+            if (cardEl) cardsContainer.appendChild(cardEl);
+        });
+
+        order.forEach(cardId => {
+            const chipEl = toolbar.querySelector(`.toggle-chip-btn[data-toggle-target="${cardId}"]`);
+            if (chipEl) toolbar.appendChild(chipEl);
+        });
+    }
+
+    function getSavedWorkerCardOrder() {
+        try {
+            const saved = localStorage.getItem('orchest_worker_card_order');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed) && parsed.length > 0 && parsed.includes('card-worker-chat')) {
+                    return parsed;
+                }
+            }
+        } catch (e) {}
+        return DEFAULT_WORKER_CARD_ORDER;
+    }
+
+    function saveWorkerCardOrder(order) {
+        try {
+            localStorage.setItem('orchest_worker_card_order', JSON.stringify(order));
+        } catch (e) {}
+    }
+
+    function applyWorkerCardOrder(order) {
+        const cardsContainer = document.getElementById('worker-cards-container');
+        const toolbar = document.getElementById('worker-visibility-toolbar');
+        if (!cardsContainer || !toolbar) return;
+
+        order.forEach(cardId => {
+            const cardEl = cardsContainer.querySelector(`.worker-card-item[data-card-id="${cardId}"]`);
+            if (cardEl) cardsContainer.appendChild(cardEl);
+        });
+
+        order.forEach(cardId => {
+            const chipEl = toolbar.querySelector(`.toggle-chip-btn[data-toggle-target="${cardId}"]`);
+            if (chipEl) toolbar.appendChild(chipEl);
+        });
+    }
+
+    function setupDragAndDropSorting() {
+        // 1. Host Mode Drag & Drop
+        const hostToolbar = document.getElementById('visibility-toolbar');
+        if (hostToolbar) {
+            let draggedChip = null;
+            hostToolbar.querySelectorAll('.toggle-chip-btn').forEach(chip => {
+                chip.setAttribute('draggable', 'true');
+                chip.addEventListener('dragstart', (e) => {
+                    draggedChip = chip;
+                    chip.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', chip.getAttribute('data-toggle-target'));
+                });
+                chip.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (chip !== draggedChip) chip.classList.add('drag-over');
+                });
+                chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+                chip.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    chip.classList.remove('drag-over');
+                    if (draggedChip && draggedChip !== chip) {
+                        const allChips = Array.from(hostToolbar.querySelectorAll('.toggle-chip-btn'));
+                        const draggedIdx = allChips.indexOf(draggedChip);
+                        const targetIdx = allChips.indexOf(chip);
+                        if (draggedIdx < targetIdx) {
+                            hostToolbar.insertBefore(draggedChip, chip.nextSibling);
+                        } else {
+                            hostToolbar.insertBefore(draggedChip, chip);
+                        }
+                        const newOrder = Array.from(hostToolbar.querySelectorAll('.toggle-chip-btn'))
+                            .map(c => c.getAttribute('data-toggle-target'))
+                            .filter(Boolean);
+                        saveCardOrder(newOrder);
+                        applyCardOrder(newOrder);
+                    }
+                });
+                chip.addEventListener('dragend', () => {
+                    chip.classList.remove('dragging');
+                    hostToolbar.querySelectorAll('.toggle-chip-btn').forEach(c => c.classList.remove('drag-over'));
+                    draggedChip = null;
+                });
+            });
+            applyCardOrder(getSavedCardOrder());
+        }
+
+        // 2. Worker Mode Drag & Drop
+        const workerToolbar = document.getElementById('worker-visibility-toolbar');
+        if (workerToolbar) {
+            let draggedWorkerChip = null;
+            workerToolbar.querySelectorAll('.toggle-chip-btn').forEach(chip => {
+                chip.setAttribute('draggable', 'true');
+                chip.addEventListener('dragstart', (e) => {
+                    draggedWorkerChip = chip;
+                    chip.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', chip.getAttribute('data-toggle-target'));
+                });
+                chip.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (chip !== draggedWorkerChip) chip.classList.add('drag-over');
+                });
+                chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+                chip.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    chip.classList.remove('drag-over');
+                    if (draggedWorkerChip && draggedWorkerChip !== chip) {
+                        const allChips = Array.from(workerToolbar.querySelectorAll('.toggle-chip-btn'));
+                        const draggedIdx = allChips.indexOf(draggedWorkerChip);
+                        const targetIdx = allChips.indexOf(chip);
+                        if (draggedIdx < targetIdx) {
+                            workerToolbar.insertBefore(draggedWorkerChip, chip.nextSibling);
+                        } else {
+                            workerToolbar.insertBefore(draggedWorkerChip, chip);
+                        }
+                        const newOrder = Array.from(workerToolbar.querySelectorAll('.toggle-chip-btn'))
+                            .map(c => c.getAttribute('data-toggle-target'))
+                            .filter(Boolean);
+                        saveWorkerCardOrder(newOrder);
+                        applyWorkerCardOrder(newOrder);
+                    }
+                });
+                chip.addEventListener('dragend', () => {
+                    chip.classList.remove('dragging');
+                    workerToolbar.querySelectorAll('.toggle-chip-btn').forEach(c => c.classList.remove('drag-over'));
+                    draggedWorkerChip = null;
+                });
+            });
+            applyWorkerCardOrder(getSavedWorkerCardOrder());
+        }
+    }
+
+    // Auto-poll cluster every 2 seconds & benchmark periodically
     setInterval(() => {
         fetchCluster();
         if (activeView === 'worker') fetchWorkerMetrics();
+        fetchHardwareBenchmark();
+        fetchEngineStatus();
     }, 2000);
 
     fetchCluster();
+    fetchHardwareBenchmark();
+    fetchEngineStatus();
+    setupDragAndDropSorting();
 });
+
+
+

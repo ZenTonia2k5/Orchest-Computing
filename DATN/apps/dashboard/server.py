@@ -3,6 +3,7 @@ import sys
 import time
 import socket
 import asyncio
+import threading
 from typing import Dict, Any, Optional, List
 
 from fastapi import FastAPI, HTTPException
@@ -77,6 +78,22 @@ class NodePingRequest(BaseModel):
     port: int = 5555
 
 
+class EngineToggleRequest(BaseModel):
+    enabled: bool
+
+
+SWARM_ENGINE_STATE = {
+    "enabled": False,  # Default to Standby mode
+    "status": "STANDBY",  # "STANDBY" | "RUNNING"
+    "auto_benchmark_interval_sec": 300,  # 5 minutes (300 seconds)
+    "last_benchmark_time": time.time(),
+    "next_benchmark_countdown_sec": 300,
+}
+
+
+from orchest.profiler.hardware_benchmark import run_client_hardware_rating, LATEST_BENCHMARK
+
+
 @app.on_event("startup")
 def startup_event():
     # Start Host Discovery Listener
@@ -97,7 +114,37 @@ def startup_event():
             intermediate_size=cfg["intermediate_size"],
         )
     except Exception as e:
-        logger.warning(f"Initial model slicing notice: {e}")
+        pass
+
+    # Background periodic auto-benchmark runner (runs on startup, and every 5 mins when inference engine is in Standby)
+    def _bg_periodic_benchmark_loop():
+        time.sleep(1.0)
+        try:
+            run_client_hardware_rating(duration=2.0, cooldown=0.5)
+            SWARM_ENGINE_STATE["last_benchmark_time"] = time.time()
+        except Exception as e:
+            print(f"Initial hardware rating notice: {e}")
+
+        while True:
+            time.sleep(3.0)
+            now = time.time()
+            elapsed = now - SWARM_ENGINE_STATE["last_benchmark_time"]
+            remaining = max(0, int(SWARM_ENGINE_STATE["auto_benchmark_interval_sec"] - elapsed))
+            SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = remaining
+
+            # If inference is NOT started (in STANDBY mode), auto re-run benchmark every 5 minutes (300s)
+            if not SWARM_ENGINE_STATE["enabled"] and elapsed >= SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]:
+                try:
+                    print("⏱️ [Auto-Benchmark] Inference Engine in Standby: running periodic hardware rating...")
+                    run_client_hardware_rating(duration=2.0, cooldown=0.5)
+                    SWARM_ENGINE_STATE["last_benchmark_time"] = time.time()
+                    SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]
+                except Exception as e:
+                    print(f"Auto-benchmark notice: {e}")
+
+    threading.Thread(target=_bg_periodic_benchmark_loop, daemon=True).start()
+
+
 
 
 @app.on_event("shutdown")
@@ -106,9 +153,26 @@ def shutdown_event():
     local_worker.stop()
 
 
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.get("/", response_class=FileResponse)
 def serve_index():
-    return FileResponse(os.path.join(static_dir, "index.html"))
+    return FileResponse(
+        os.path.join(static_dir, "index.html"),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
 
 
 # ---------------------------------------------------------
@@ -297,3 +361,52 @@ def run_generation(req: GenerateRequest):
             "text": f"Hello! I am Orchest Swarm AI. Received your message: '{req.prompt}'. Processing across LAN cluster.",
             "tokens_generated": req.max_tokens,
         }
+
+
+# ---------------------------------------------------------
+# Client Hardware Inference Rating APIs
+# ---------------------------------------------------------
+
+@app.get("/api/benchmark/rating")
+def get_benchmark_rating():
+    return LATEST_BENCHMARK
+
+
+@app.post("/api/benchmark/refresh")
+def refresh_benchmark_rating():
+    def _run_bg():
+        try:
+            run_client_hardware_rating(duration=2.5, cooldown=0.5)
+        except Exception as e:
+            print(f"Error during manual benchmark refresh: {e}")
+
+    threading.Thread(target=_run_bg, daemon=True).start()
+    return {"status": "STARTED", "message": "Hardware inference benchmark started in background."}
+
+
+# ---------------------------------------------------------
+# Swarm Inference Engine Power & Auto-Benchmark Control APIs
+# ---------------------------------------------------------
+
+@app.get("/api/engine/status")
+def get_engine_status():
+    elapsed = time.time() - SWARM_ENGINE_STATE["last_benchmark_time"]
+    remaining = max(0, int(SWARM_ENGINE_STATE["auto_benchmark_interval_sec"] - elapsed))
+    SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = remaining
+    return SWARM_ENGINE_STATE
+
+
+@app.post("/api/engine/toggle")
+def toggle_engine(req: EngineToggleRequest):
+    SWARM_ENGINE_STATE["enabled"] = req.enabled
+    SWARM_ENGINE_STATE["status"] = "RUNNING" if req.enabled else "STANDBY"
+    if req.enabled:
+        # If user enables engine, deploy slice plan if ready
+        if host_orchestrator.current_slice_plan:
+            try:
+                host_orchestrator.deploy_slice_plan()
+            except Exception:
+                pass
+    return SWARM_ENGINE_STATE
+
+

@@ -1,5 +1,19 @@
 from .node_profiler import NodeProfiler, NodeMetrics
 from .network_profiler import NetworkProfiler
 from .model_profiler import ModelProfiler, LayerProfile
+from .correctness import NumericalCorrectnessAuditor
+from .hardware_benchmark import run_client_hardware_rating, LATEST_BENCHMARK, calculate_performance_tier
 
-__all__ = ["NodeProfiler", "NodeMetrics", "NetworkProfiler", "ModelProfiler", "LayerProfile"]
+__all__ = [
+    "NodeProfiler",
+    "NodeMetrics",
+    "NetworkProfiler",
+    "ModelProfiler",
+    "LayerProfile",
+    "NumericalCorrectnessAuditor",
+    "run_client_hardware_rating",
+    "LATEST_BENCHMARK",
+    "calculate_performance_tier",
+]
+
+
