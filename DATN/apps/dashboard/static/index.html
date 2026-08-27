@@ -116,6 +116,12 @@
                                 <span id="chat-active-model-title">Qwen2.5-0.5B Swarm Chat</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
+                                <select id="chat-max-tokens-selector" class="chat-tokens-select" title="Maximum Generated Output Tokens">
+                                    <option value="128">128 max tok</option>
+                                    <option value="256">256 max tok</option>
+                                    <option value="512">512 max tok</option>
+                                    <option value="1024" selected>1024 max tok</option>
+                                </select>
                                 <span class="chat-speed-tag" id="chat-speed">Stream Active</span>
                                 <button class="btn-card-toggle" data-toggle-target="card-chat" title="Collapse / Expand Section">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -188,10 +194,16 @@
                                 <div class="control-item">
                                     <label for="model-selector">AI Model Option:</label>
                                     <select id="model-selector" class="custom-select">
-                                        <option value="Qwen/Qwen2.5-0.5B-Instruct">Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
-                                        <option value="Qwen/Qwen2-1.5B-Instruct">Qwen2-1.5B-Instruct (Balanced Swarm - 28 Layers)</option>
+                                        <option value="Qwen/Qwen2.5-0.5B-Instruct" selected>Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
+                                        <option value="Qwen/Qwen2.5-1.5B-Instruct">Qwen2.5-1.5B-Instruct (Balanced Edge - 28 Layers)</option>
                                         <option value="meta-llama/Llama-3.2-1B">Llama-3.2-1B (High Quality - 16 Layers)</option>
-                                        <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Large VRAM Swarm - 28 Layers)</option>
+                                        <option value="meta-llama/Llama-3.2-3B">Llama-3.2-3B (Medium Swarm - 28 Layers)</option>
+                                        <option value="Qwen/Qwen2.5-7B-Instruct">Qwen2.5-7B-Instruct (7B Frontier - 28 Layers)</option>
+                                        <option value="meta-llama/Meta-Llama-3.1-8B-Instruct">Meta-Llama-3.1-8B-Instruct (8B Heavy - 32 Layers)</option>
+                                        <option value="google/gemma-2-9b-it">Gemma-2-9B-IT (10B Class - 42 Layers)</option>
+                                        <option value="Qwen/Qwen2.5-14B-Instruct">Qwen2.5-14B-Instruct (14B Cluster - 48 Layers)</option>
+                                        <option value="google/gemma-2-27b-it">Gemma-2-27B-IT (27B Ultra Swarm - 46 Layers)</option>
+                                        <option value="Qwen/Qwen2.5-32B-Instruct">Qwen2.5-32B-Instruct (32B Flagship Swarm - 64 Layers)</option>
                                     </select>
                                 </div>
 
@@ -835,6 +847,20 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=20260827_09"></script>
+    <!-- TOAST NOTIFICATION CONTAINER -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- STICKY FLOATING ENGINE CONTROL (FAB) -->
+    <div class="sticky-engine-fab-wrap" id="sticky-engine-fab-wrap">
+        <button class="sticky-engine-fab standby" id="sticky-engine-fab" aria-label="Toggle Swarm Engine" title="Start Swarm Inference">
+            <div class="fab-pulse-ring"></div>
+            <div class="fab-icon-box">
+                <span class="fab-icon" id="fab-engine-icon">▶️</span>
+            </div>
+            <span class="fab-tooltip" id="fab-engine-tooltip">Start Swarm Inference</span>
+        </button>
+    </div>
+
+    <script src="/static/app.js?v=20260827_21"></script>
 </body>
 </html>

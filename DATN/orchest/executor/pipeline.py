@@ -52,11 +52,17 @@ class SwarmPipelineExecutor:
                 "next_port": next_port,
             }
 
+            # If target node is the host master itself, process locally without network overhead
+            host_id = getattr(self, "host_id", "host_master")
+            if node.node_id == host_id or node.node_id == "host_master":
+                logger.info(f"Stage {i} is Host Master (in-process) -> Local layer execution ready.")
+                continue
+
             logger.info(
-                f"Dispatching Stage {i} to Node {node.node_id} ({node.ip_address}): Layers [{slice_assign.layer_start}..{slice_assign.layer_end}]"
+                f"Dispatching Stage {i} to Remote Worker {node.node_id} ({node.ip_address}): Layers [{slice_assign.layer_start}..{slice_assign.layer_end}]"
             )
 
-            # Send DISPATCH_SLICE packet to worker TCP port
+            # Send DISPATCH_SLICE packet to remote worker TCP port
             target_port = getattr(node, "tcp_port", 5555)
             ok = TensorTransportClient.send_packet(
                 target_ip=node.ip_address,

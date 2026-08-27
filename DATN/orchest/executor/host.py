@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import socket
+import threading
 import time
 from typing import Dict, List, Optional, Any
 
@@ -50,15 +52,39 @@ class HostOrchestrator:
         self.active_model_name: Optional[str] = None
         self.tokenizer: Optional[Any] = None
 
+        # Host master local node registration
+        self.host_profiler = NodeProfiler(node_id=self.node_id)
+        self._last_host_profile_time: float = 0.0
+        self._refresh_local_host_node()
+
         # Connect failure callback to prune dead worker nodes
         def _on_node_failed(dead_node_id: str):
-            if dead_node_id in self.worker_nodes:
-                del self.worker_nodes[dead_node_id]
-            if dead_node_id in self.worker_ports:
-                del self.worker_ports[dead_node_id]
-            logger.warning(f"Host pruned failed worker [{dead_node_id}] from active topology.")
+            if dead_node_id != self.node_id:
+                if dead_node_id in self.worker_nodes:
+                    del self.worker_nodes[dead_node_id]
+                if dead_node_id in self.worker_ports:
+                    del self.worker_ports[dead_node_id]
+                logger.warning(f"Host pruned failed worker [{dead_node_id}] from active topology.")
 
         self.fault_monitor.on_node_failed_cb = _on_node_failed
+
+    def _refresh_local_host_node(self) -> NodeMetrics:
+        now = time.time()
+        if (now - self._last_host_profile_time) < 5.0 and self.node_id in self.worker_nodes:
+            local_node = self.worker_nodes[self.node_id]
+            self.fault_monitor.update_heartbeat(local_node)
+            return local_node
+
+        local_node = self.host_profiler.profile()
+        self._last_host_profile_time = now
+        setattr(local_node, "tcp_port", 5555)
+        cfg = self.node_configs.get(self.node_id, {})
+        setattr(local_node, "alias", cfg.get("alias", "Host Master (Mac)"))
+        setattr(local_node, "enabled", cfg.get("enabled", True))
+        self.worker_nodes[self.node_id] = local_node
+        self.worker_ports[self.node_id] = 5555
+        self.fault_monitor.update_heartbeat(local_node)
+        return local_node
 
     def _load_node_configs(self) -> Dict[str, Dict[str, Any]]:
         if os.path.exists(self.config_path):
@@ -118,6 +144,16 @@ class HostOrchestrator:
             node_metrics = beacon.node_metrics
             node_id = node_metrics.node_id
 
+            # Ignore beacons sent by the host machine itself (same hostname/IP)
+            host_node = self.worker_nodes.get(self.node_id)
+            host_ip = host_node.ip_address if host_node else None
+            host_hostname = socket.gethostname()
+
+            if node_id == self.node_id or node_id == "local_worker_edge":
+                return
+            if host_ip and node_metrics.ip_address == host_ip and (node_metrics.hostname == host_hostname or "127.0.0.1" in (node_metrics.ip_address, host_ip)):
+                return
+
             # Allowlist security check
             if self.allowlist and node_id not in self.allowlist:
                 logger.warning(
@@ -174,14 +210,32 @@ class HostOrchestrator:
         threading.Thread(target=_host_beacon_loop, daemon=True).start()
         logger.info(f"Host Config Beacon broadcast started ({self.transport_type}).")
 
-    def get_cluster_topology(self, include_disabled: bool = True) -> List[NodeMetrics]:
-        # Perform health check prune before returning
+    def get_cluster_topology(self, include_disabled: bool = True, include_self: bool = False) -> List[NodeMetrics]:
+        # Always refresh and ensure host master node is present
+        self._refresh_local_host_node()
         self.fault_monitor.check_node_failures()
-        all_nodes = list(self.worker_nodes.values())
+
+        host_node = self.worker_nodes.get(self.node_id)
+        host_ip = host_node.ip_address if host_node else None
+        host_hostname = socket.gethostname()
+
+        remote_nodes = [
+            n for nid, n in self.worker_nodes.items()
+            if nid != self.node_id
+            and nid != "local_worker_edge"
+            and not (host_ip and n.ip_address == host_ip and n.hostname == host_hostname)
+        ]
+
+        if include_self and host_node:
+            all_nodes = [host_node] + remote_nodes
+        else:
+            all_nodes = remote_nodes
+
         for n in all_nodes:
             cfg = self.node_configs.get(n.node_id, {})
-            setattr(n, "alias", cfg.get("alias", n.node_id))
-            setattr(n, "enabled", cfg.get("enabled", True))
+            setattr(n, "alias", cfg.get("alias", getattr(n, "alias", n.node_id)))
+            setattr(n, "enabled", cfg.get("enabled", getattr(n, "enabled", True)))
+
         if include_disabled:
             return all_nodes
         return [n for n in all_nodes if getattr(n, "enabled", True)]
@@ -198,7 +252,7 @@ class HostOrchestrator:
         """
         Runs Dynamic Programming partition algorithm or Ratio Cutting over discovered LAN nodes.
         """
-        cluster_nodes = self.get_cluster_topology(include_disabled=False)
+        cluster_nodes = self.get_cluster_topology(include_disabled=False, include_self=True)
         if not cluster_nodes:
             # Fallback: profile self as local host node
             host_profiler = NodeProfiler(node_id="local_host")

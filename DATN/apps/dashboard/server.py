@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import time
 import socket
 import asyncio
@@ -8,7 +9,7 @@ from typing import Dict, Any, Optional, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 # Add root directory to sys.path
@@ -26,14 +27,20 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
-local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=False)
+local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, auto_accept=True)
 
 
 MODEL_CONFIGS = {
-    "Qwen/Qwen2.5-0.5B-Instruct": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864},
-    "Qwen/Qwen2-1.5B-Instruct": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960},
-    "meta-llama/Llama-3.2-1B": {"num_layers": 16, "hidden_size": 2048, "intermediate_size": 8192},
-    "meta-llama/Llama-3.2-3B": {"num_layers": 28, "hidden_size": 3072, "intermediate_size": 8192},
+    "Qwen/Qwen2.5-0.5B-Instruct": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864, "params": "0.5B"},
+    "Qwen/Qwen2.5-1.5B-Instruct": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960, "params": "1.5B"},
+    "meta-llama/Llama-3.2-1B": {"num_layers": 16, "hidden_size": 2048, "intermediate_size": 8192, "params": "1B"},
+    "meta-llama/Llama-3.2-3B": {"num_layers": 28, "hidden_size": 3072, "intermediate_size": 8192, "params": "3B"},
+    "Qwen/Qwen2.5-7B-Instruct": {"num_layers": 28, "hidden_size": 3584, "intermediate_size": 18944, "params": "7B"},
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": {"num_layers": 32, "hidden_size": 4096, "intermediate_size": 14336, "params": "8B"},
+    "google/gemma-2-9b-it": {"num_layers": 42, "hidden_size": 3584, "intermediate_size": 14336, "params": "10B"},
+    "Qwen/Qwen2.5-14B-Instruct": {"num_layers": 48, "hidden_size": 5120, "intermediate_size": 27648, "params": "14B"},
+    "google/gemma-2-27b-it": {"num_layers": 46, "hidden_size": 4608, "intermediate_size": 36864, "params": "27B"},
+    "Qwen/Qwen2.5-32B-Instruct": {"num_layers": 64, "hidden_size": 5120, "intermediate_size": 27648, "params": "32B"},
 }
 
 
@@ -48,7 +55,7 @@ class PartitionRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt: str
-    max_tokens: int = 64
+    max_tokens: int = 1024
     temperature: float = 0.7
 
 
@@ -182,7 +189,7 @@ def serve_index():
 @app.get("/api/cluster")
 def get_cluster_status():
     from orchest.profiler.node_profiler import NodeProfiler
-    nodes = host_orchestrator.get_cluster_topology(include_disabled=True)
+    nodes = host_orchestrator.get_cluster_topology(include_disabled=True, include_self=True)
     if not nodes:
         host_profiler = NodeProfiler(node_id="host_master")
         local_node = host_profiler.profile()
@@ -334,33 +341,36 @@ def trigger_partition(req: PartitionRequest):
 
 @app.post("/api/generate")
 def run_generation(req: GenerateRequest):
+    SWARM_ENGINE_STATE["enabled"] = True
+    SWARM_ENGINE_STATE["status"] = "RUNNING"
     if not host_orchestrator.current_slice_plan:
         host_orchestrator.plan_model_slicing("Qwen/Qwen2.5-0.5B-Instruct")
         host_orchestrator.deploy_slice_plan()
 
-    try:
-        stream = swarm_generator.generate_stream(
-            prompt=req.prompt, max_new_tokens=req.max_tokens, temperature=req.temperature
-        )
-        tokens = []
-        for token_text in stream:
-            tokens.append(token_text)
-        
-        full_text = "".join(tokens).strip()
-        if not full_text:
-            full_text = f"Hello! I am Orchest Swarm AI. I received your message: '{req.prompt}'."
+    def _event_generator():
+        try:
+            stream = swarm_generator.generate_stream(
+                prompt=req.prompt, max_new_tokens=req.max_tokens, temperature=req.temperature
+            )
+            for chunk in stream:
+                if chunk:
+                    payload = json.dumps({"token": chunk})
+                    yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            err_payload = json.dumps({"token": f" (Error: {e})"})
+            yield f"data: {err_payload}\n\n"
+            yield "data: [DONE]\n\n"
 
-        return {
-            "prompt": req.prompt,
-            "text": full_text,
-            "tokens_generated": len(tokens),
-        }
-    except Exception as e:
-        return {
-            "prompt": req.prompt,
-            "text": f"Hello! I am Orchest Swarm AI. Received your message: '{req.prompt}'. Processing across LAN cluster.",
-            "tokens_generated": req.max_tokens,
-        }
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
+
+
+
+@app.post("/api/generate/stop")
+def stop_generation():
+    swarm_generator.request_stop()
+    return {"status": "STOPPED", "message": "Inference generation was forcefully aborted."}
+
 
 
 # ---------------------------------------------------------
@@ -399,14 +409,28 @@ def get_engine_status():
 @app.post("/api/engine/toggle")
 def toggle_engine(req: EngineToggleRequest):
     SWARM_ENGINE_STATE["enabled"] = req.enabled
-    SWARM_ENGINE_STATE["status"] = "RUNNING" if req.enabled else "STANDBY"
     if req.enabled:
-        # If user enables engine, deploy slice plan if ready
-        if host_orchestrator.current_slice_plan:
+        SWARM_ENGINE_STATE["status"] = "INITIALIZING"
+        def _warmup_worker():
             try:
-                host_orchestrator.deploy_slice_plan()
-            except Exception:
-                pass
+                model_name = host_orchestrator.active_model_name or "Qwen/Qwen2.5-0.5B-Instruct"
+                swarm_generator.warmup_model(model_name)
+                if host_orchestrator.current_slice_plan:
+                    host_orchestrator.deploy_slice_plan()
+                SWARM_ENGINE_STATE["status"] = "RUNNING"
+            except Exception as e:
+                print(f"Warmup error: {e}")
+                SWARM_ENGINE_STATE["status"] = "RUNNING"
+
+        threading.Thread(target=_warmup_worker, daemon=True).start()
+    else:
+        SWARM_ENGINE_STATE["status"] = "STANDBY"
+        swarm_generator.request_stop()
+        swarm_generator.unload_model()
+        SWARM_ENGINE_STATE["last_benchmark_time"] = time.time()
+        SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]
+
     return SWARM_ENGINE_STATE
+
 
 

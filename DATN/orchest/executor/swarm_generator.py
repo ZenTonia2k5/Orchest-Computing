@@ -3,7 +3,8 @@ import time
 from typing import Generator, Dict, Any, Optional, List
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+import threading
 
 logger = logging.getLogger("SwarmGenerator")
 
@@ -18,8 +19,29 @@ class SwarmAutoregressiveGenerator:
         self.host = host_orchestrator
         self.local_model: Optional[Any] = None
         self.tokenizer: Optional[Any] = None
+        self.loaded_model_name: Optional[str] = None
+        self.stop_requested: bool = False
+
+    def warmup_model(self, model_name: Optional[str] = None):
+        self.stop_requested = False
+        target_model = model_name or getattr(self.host, "active_model_name", "Qwen/Qwen2.5-0.5B-Instruct") or "Qwen/Qwen2.5-0.5B-Instruct"
+        self._ensure_model_loaded(target_model)
+
+    def unload_model(self):
+        self.local_model = None
+        self.tokenizer = None
+        self.loaded_model_name = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        logger.info("Unloaded local model weights and freed memory cache.")
 
     def _ensure_model_loaded(self, model_name: str):
+        if self.loaded_model_name != model_name:
+            self.local_model = None
+            self.tokenizer = None
+
         if self.tokenizer is None:
             try:
                 logger.info(f"Loading tokenizer for {model_name}...")
@@ -30,31 +52,41 @@ class SwarmAutoregressiveGenerator:
         if self.local_model is None and self.tokenizer is not None:
             device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
             try:
-                logger.info(f"Loading weights for {model_name}...")
+                logger.info(f"Loading weights for {model_name} into {device}...")
+                dtype = torch.float16 if device != "cpu" else torch.float32
                 self.local_model = AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    torch_dtype=torch.float16 if device != "cpu" else torch.float32,
+                    dtype=dtype,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True,
                 ).to(device)
+                self.loaded_model_name = model_name
+                logger.info(f"Successfully loaded and warmed up {model_name} on {device}.")
             except Exception as e:
                 logger.warning(f"Model load notice: {e}")
+
+        self.stop_requested = False
+
+    def request_stop(self):
+        self.stop_requested = True
+        logger.info("Swarm generation stop requested.")
 
     def generate_stream(
         self,
         prompt: str,
-        max_new_tokens: int = 128,
+        max_new_tokens: int = 1024,
         temperature: float = 0.7,
-    ) -> Generator[str, None, Dict[str, Any]]:
+    ) -> Generator[str, None, None]:
         """
-        Generates text response token-by-token across Swarm cluster.
+        Generates text response token-by-token instantaneously using TextIteratorStreamer.
         """
+        self.stop_requested = False
         model_name = getattr(self.host, "active_model_name", "Qwen/Qwen2.5-0.5B-Instruct") or "Qwen/Qwen2.5-0.5B-Instruct"
         self._ensure_model_loaded(model_name)
 
         device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
 
-        if self.local_model is not None and self.tokenizer is not None:
+        if self.local_model is not None and self.tokenizer is not None and not self.stop_requested:
             # Format prompt using chat template for Instruct models (Qwen, Llama, etc.)
             if hasattr(self.tokenizer, "apply_chat_template"):
                 try:
@@ -68,31 +100,29 @@ class SwarmAutoregressiveGenerator:
                 formatted_prompt = prompt
 
             inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(device)
-            start_time = time.time()
-            
-            with torch.no_grad():
-                output_ids = self.local_model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    do_sample=(temperature > 0.1),
-                    pad_token_id=self.tokenizer.eos_token_id,
-                )
+            streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-            new_tokens = output_ids[0][inputs["input_ids"].shape[1] :]
-            text_out = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+            generation_kwargs = dict(
+                **inputs,
+                streamer=streamer,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=(temperature > 0.1),
+                repetition_penalty=1.1,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
 
-            for char_chunk in text_out.split(" "):
-                yield char_chunk + " "
-                time.sleep(0.02)
+            gen_thread = threading.Thread(target=self.local_model.generate, kwargs=generation_kwargs)
+            gen_thread.start()
 
-            total_time = time.time() - start_time
-            return {
-                "tokens_generated": len(new_tokens),
-                "total_time_sec": round(total_time, 2),
-            }
+            for new_text in streamer:
+                if self.stop_requested:
+                    break
+                yield new_text
+
+            gen_thread.join(timeout=0.1)
         else:
-            # Intelligent fallback stream while model loading
+            # Fallback stream
             low_p = prompt.lower()
             if "independence" in low_p or "national day" in low_p:
                 answer = "National Independence Day of Vietnam (Ngày Quốc Khánh) is celebrated annually on September 2nd (2/9), commemorating President Ho Chi Minh reading the Declaration of Independence at Ba Dinh Square in 1945."
@@ -110,7 +140,8 @@ class SwarmAutoregressiveGenerator:
                 answer = f"Orchest Swarm AI Response: Processed '{prompt}' across LAN swarm nodes."
 
             for word in answer.split():
+                if self.stop_requested:
+                    break
                 yield word + " "
-                time.sleep(0.03)
+                time.sleep(0.02)
 
-            return {"tokens_generated": len(answer.split()), "total_time_sec": 0.4}

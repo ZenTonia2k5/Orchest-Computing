@@ -10,9 +10,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeModelName = 'Qwen/Qwen2.5-0.5B-Instruct';
     let modelConfigs = {
         "Qwen/Qwen2.5-0.5B-Instruct": { num_layers: 24 },
-        "Qwen/Qwen2-1.5B-Instruct": { num_layers: 28 },
+        "Qwen/Qwen2.5-1.5B-Instruct": { num_layers: 28 },
         "meta-llama/Llama-3.2-1B": { num_layers: 16 },
         "meta-llama/Llama-3.2-3B": { num_layers: 28 },
+        "Qwen/Qwen2.5-7B-Instruct": { num_layers: 28 },
+        "meta-llama/Meta-Llama-3.1-8B-Instruct": { num_layers: 32 },
+        "google/gemma-2-9b-it": { num_layers: 42 },
+        "Qwen/Qwen2.5-14B-Instruct": { num_layers: 48 },
+        "google/gemma-2-27b-it": { num_layers: 46 },
+        "Qwen/Qwen2.5-32B-Instruct": { num_layers: 64 },
     };
     let ratioValues = [];
     let nodeConfigs = {};
@@ -85,6 +91,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function switchView(target) {
         activeView = target;
+        try {
+            localStorage.setItem('orchest_active_mode', target);
+        } catch (e) {}
+
         [btnHost, btnWorker, btnManage].forEach(b => b.classList.remove('active'));
         [viewHost, viewWorker, viewManage].forEach(v => v.classList.remove('active'));
 
@@ -108,6 +118,12 @@ document.addEventListener('DOMContentLoaded', () => {
     btnHost.addEventListener('click', () => switchView('host'));
     btnWorker.addEventListener('click', () => switchView('worker'));
     btnManage.addEventListener('click', () => switchView('manage'));
+
+    // Restore saved mode preference
+    const savedActiveMode = localStorage.getItem('orchest_active_mode') || 'host';
+    if (savedActiveMode !== 'host') {
+        switchView(savedActiveMode);
+    }
 
     // ---------------------------------------------------------
     // Component Collapsible & Visibility Toolbar Handlers
@@ -177,6 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
         strategyRatioBtn.classList.remove('active');
         ratioConfigPanel.style.display = 'none';
         partitionLabel.innerText = 'Partition Model (Auto DP)';
+        debounceApplyPartition();
     });
 
     strategyRatioBtn.addEventListener('click', () => {
@@ -186,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ratioConfigPanel.style.display = 'block';
         partitionLabel.innerText = 'Apply Ratio Partition';
         syncRatioSlidersForNodes(true);
+        debounceApplyPartition();
     });
 
     modelSelector.addEventListener('change', () => {
@@ -194,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const chatTitle = document.getElementById('chat-active-model-title');
         if (chatTitle) chatTitle.innerText = `${shortName} Swarm Chat`;
         updateLayerAllocationPreview();
+        debounceApplyPartition();
     });
 
     function getModelTotalLayers() {
@@ -292,6 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ratioValues = [...presets[idx].values];
                     updateSliderDisplayValues(getEffectiveActiveNodes());
                     updateDistributionBar();
+                    debounceApplyPartition();
                 }
             });
         });
@@ -346,6 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ratioValues[0] = 100;
             updateSliderDisplayValues(getEffectiveActiveNodes());
             updateDistributionBar();
+            debounceApplyPartition();
             return;
         }
 
@@ -406,6 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         updateSliderDisplayValues(getEffectiveActiveNodes());
         updateDistributionBar();
+        debounceApplyPartition();
     }
 
     function calculateLayerSlices(totalLayers, ratios) {
@@ -791,8 +813,167 @@ document.addEventListener('DOMContentLoaded', () => {
         canvas.innerHTML = html;
     }
 
-    // 6. Trigger Partition Model
-    document.getElementById('btn-run-dp').addEventListener('click', async () => {
+    let partitionDebounceTimer = null;
+    function debounceApplyPartition() {
+        if (partitionDebounceTimer) clearTimeout(partitionDebounceTimer);
+        partitionDebounceTimer = setTimeout(() => {
+            applyPartitionModel(false);
+        }, 400);
+    }
+
+    // =========================================================
+    // TOAST NOTIFICATION SYSTEM & CLUSTER READY ALERTS
+    // =========================================================
+    function showToast({
+        type = 'success',
+        icon = '🎉',
+        title = 'Notification',
+        message = '',
+        actionText = null,
+        onAction = null,
+        duration = 8000
+    }) {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+
+        const toast = document.createElement('div');
+        toast.className = `toast-notification ${type === 'info' ? 'toast-info' : (type === 'warn' ? 'toast-warn' : '')}`;
+
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        toast.innerHTML = `
+            <div class="toast-icon-wrap">${icon}</div>
+            <div class="toast-content">
+                <div class="toast-title-row">
+                    <span class="toast-title">${title}</span>
+                    <span class="toast-time">${timeStr}</span>
+                </div>
+                <div class="toast-message">${message}</div>
+                ${actionText ? `
+                    <div class="toast-actions">
+                        <button class="toast-btn-action" id="toast-action-btn">
+                            <span>${actionText}</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                        </button>
+                    </div>
+                ` : ''}
+            </div>
+            <button class="toast-btn-close" title="Dismiss">✕</button>
+        `;
+
+        container.appendChild(toast);
+
+        // Sound chime using Web Audio API
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'sine';
+
+            if (type === 'warn') {
+                // Downward soft tone for Stop / Standby
+                osc.frequency.setValueAtTime(440.00, ctx.currentTime); // A4
+                osc.frequency.exponentialRampToValueAtTime(293.66, ctx.currentTime + 0.2); // D4
+                gain.gain.setValueAtTime(0.06, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.4);
+            } else if (type === 'info') {
+                // Gentle ping for Starting / Info
+                osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+                gain.gain.setValueAtTime(0.05, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.25);
+            } else {
+                // Upward bright chime for Ready / Success
+                osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+                osc.frequency.exponentialRampToValueAtTime(880.00, ctx.currentTime + 0.15); // A5
+                gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.4);
+            }
+        } catch (e) {}
+
+        const closeBtn = toast.querySelector('.toast-btn-close');
+        function dismissToast() {
+            toast.classList.add('hiding');
+            setTimeout(() => {
+                if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 300);
+        }
+
+        if (closeBtn) closeBtn.addEventListener('click', dismissToast);
+
+        if (actionText && onAction) {
+            const actBtn = toast.querySelector('#toast-action-btn');
+            if (actBtn) {
+                actBtn.addEventListener('click', () => {
+                    onAction();
+                    dismissToast();
+                });
+            }
+        }
+
+        if (duration > 0) {
+            setTimeout(dismissToast, duration);
+        }
+    }
+
+    let lastNotifiedPlanKey = null;
+    function notifySwarmClusterReady(slicePlan, modelName, forceAlert = false) {
+        const shortModel = (modelName || activeModelName || 'Qwen2.5-0.5B-Instruct').split('/').pop();
+        const totalLayers = (slicePlan && slicePlan.length > 0)
+            ? slicePlan.reduce((acc, s) => acc + (s.layers_count || 0), 0)
+            : getModelTotalLayers();
+        const nodeCount = (slicePlan && slicePlan.length > 0)
+            ? slicePlan.length
+            : (getEffectiveActiveNodes().length || 1);
+
+        const planKey = `${shortModel}_${nodeCount}_${totalLayers}`;
+        if (!forceAlert && lastNotifiedPlanKey === planKey) return;
+        lastNotifiedPlanKey = planKey;
+
+        // Visual highlight on header badge
+        if (headerBadge) {
+            headerBadge.style.boxShadow = '0 0 20px rgba(16, 185, 129, 0.6)';
+            headerBadge.style.borderColor = 'rgba(16, 185, 129, 0.8)';
+            setTimeout(() => {
+                headerBadge.style.boxShadow = '';
+                headerBadge.style.borderColor = '';
+            }, 3000);
+        }
+
+        // Pulse the Chat card
+        const chatCard = document.querySelector('[data-card-id="card-chat"]');
+        if (chatCard) {
+            chatCard.style.boxShadow = '0 0 25px rgba(16, 185, 129, 0.35)';
+            setTimeout(() => { chatCard.style.boxShadow = ''; }, 3000);
+        }
+
+        showToast({
+            type: 'success',
+            icon: '🚀',
+            title: 'Swarm Cluster Ready!',
+            message: `Tất cả <strong>${nodeCount} máy tính</strong> đã tải & cài đặt xong phân mảnh mô hình <strong>${shortModel}</strong> (${totalLayers} Layers). Bạn có thể bắt đầu sử dụng ngay!`,
+            actionText: '💬 Bắt đầu Chat AI',
+            onAction: () => {
+                if (chatCard) {
+                    chatCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                const chatInput = document.getElementById('chat-input-field');
+                if (chatInput) {
+                    setTimeout(() => { chatInput.focus(); }, 400);
+                }
+            },
+            duration: 8000
+        });
+    }
+
+    async function applyPartitionModel(showAnimation = true) {
         const modelName = document.getElementById('model-selector').value;
         const totalLayers = getModelTotalLayers();
         const chatTitle = document.getElementById('chat-active-model-title');
@@ -817,27 +998,36 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (data.slice_plan) {
-                data.slice_plan.forEach(s => { s.node.download_pct = 35; });
-                renderHostView(data);
-                renderVisualExecutionMap(data.slice_plan, getEffectiveActiveNodes());
-
-                setTimeout(() => {
-                    data.slice_plan.forEach(s => { s.node.download_pct = 70; });
+                currentSlicePlan = data.slice_plan || [];
+                if (showAnimation) {
+                    data.slice_plan.forEach(s => { s.node.download_pct = 35; });
                     renderHostView(data);
                     renderVisualExecutionMap(data.slice_plan, getEffectiveActiveNodes());
-                }, 500);
 
-                setTimeout(() => {
-                    data.slice_plan.forEach(s => { s.node.download_pct = 100; });
+                    setTimeout(() => {
+                        data.slice_plan.forEach(s => { s.node.download_pct = 70; });
+                        renderHostView(data);
+                        renderVisualExecutionMap(data.slice_plan, getEffectiveActiveNodes());
+                    }, 400);
+
+                    setTimeout(() => {
+                        data.slice_plan.forEach(s => { s.node.download_pct = 100; });
+                        renderHostView(data);
+                        renderVisualExecutionMap(data.slice_plan, getEffectiveActiveNodes());
+                    }, 800);
+                } else {
                     renderHostView(data);
                     renderVisualExecutionMap(data.slice_plan, getEffectiveActiveNodes());
-                }, 1100);
+                }
             }
-
-            currentSlicePlan = data.slice_plan || [];
         } catch (err) {
             console.error('Partition error:', err);
         }
+    }
+
+    // 6. Trigger Partition Model
+    document.getElementById('btn-run-dp').addEventListener('click', () => {
+        applyPartitionModel(true);
     });
 
     // 7. Chat Box Prompting
@@ -845,11 +1035,63 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSend = document.getElementById('btn-chat-send');
     const chatMessages = document.getElementById('chat-messages-container');
 
+    let activeGenerationController = null;
+    let activeStreamAnimInterval = null;
+    let isGenerating = false;
+
+    function abortActiveGeneration(reason = '⏹ Generation stopped.') {
+        if (activeGenerationController) {
+            try { activeGenerationController.abort(); } catch (e) {}
+            activeGenerationController = null;
+        }
+        fetch('/api/generate/stop', { method: 'POST' }).catch(() => {});
+
+        if (activeStreamAnimInterval) {
+            clearInterval(activeStreamAnimInterval);
+            activeStreamAnimInterval = null;
+        }
+
+        document.querySelectorAll('.connector-pulse').forEach(p => p.classList.remove('animating'));
+        document.querySelectorAll('.pipeline-node-card').forEach(card => card.classList.remove('active'));
+        const statusText = document.getElementById('pipeline-status-text');
+        if (statusText) statusText.innerText = 'Pipeline Ready';
+
+        const lastAssistant = chatMessages?.querySelector('.chat-msg.assistant:last-child');
+        if (lastAssistant && lastAssistant.innerText.includes('Streaming tokens')) {
+            lastAssistant.innerHTML = `<span style="color: var(--accent-rose); font-style: italic;">${reason}</span>`;
+        }
+
+        isGenerating = false;
+        if (btnSend) {
+            btnSend.className = 'btn btn-primary btn-chat-send';
+            btnSend.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                <span>Send</span>
+            `;
+        }
+    }
+
     async function sendChatPrompt() {
+        if (isGenerating) {
+            abortActiveGeneration('⏹ Generation stopped by user.');
+            return;
+        }
+
         const text = chatInput.value.trim();
         if (!text) return;
 
         chatInput.value = '';
+
+        if (!currentEngineEnabled) {
+            currentEngineEnabled = true;
+            fetchEngineStatus();
+        }
+
+        isGenerating = true;
+        if (btnSend) {
+            btnSend.className = 'btn btn-chat-send btn-chat-stop';
+            btnSend.innerHTML = `<span>⏹</span> <span>Stop</span>`;
+        }
 
         const userMsg = document.createElement('div');
         userMsg.className = 'chat-msg user';
@@ -871,7 +1113,8 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.connector-pulse').forEach(p => p.classList.add('animating'));
 
         let stepIdx = 0;
-        const stageAnimInterval = setInterval(() => {
+        if (activeStreamAnimInterval) clearInterval(activeStreamAnimInterval);
+        activeStreamAnimInterval = setInterval(() => {
             document.querySelectorAll('.pipeline-node-card').forEach((card, idx) => {
                 if (idx === stepIdx) card.classList.add('active');
                 else card.classList.remove('active');
@@ -879,28 +1122,99 @@ document.addEventListener('DOMContentLoaded', () => {
             stepIdx = (stepIdx + 1) % (numStages + 1);
         }, 350);
 
+        const tokenSelect = document.getElementById('chat-max-tokens-selector');
+        const maxTokens = tokenSelect ? parseInt(tokenSelect.value, 10) : 1024;
+
+        activeGenerationController = new AbortController();
+        const timeoutId = setTimeout(() => {
+            if (isGenerating) {
+                abortActiveGeneration('⚠️ Request timed out after 60s.');
+            }
+        }, 60000);
+
         try {
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: text, max_tokens: 64 })
+                body: JSON.stringify({ prompt: text, max_tokens: maxTokens }),
+                signal: activeGenerationController.signal
             });
 
-            const data = await res.json();
-            const formattedText = (data.text || '').replace(/\n/g, '<br>');
-            assistantMsg.innerHTML = formattedText;
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
 
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-            const tokSec = ((data.tokens_generated || 64) / (parseFloat(elapsed) || 1)).toFixed(1);
-            document.getElementById('chat-speed').innerText = `${tokSec} tok/s | ${elapsed}s (${data.tokens_generated || 64} tokens)`;
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let fullText = '';
+            let tokenCount = 0;
+            let buffer = '';
+            let firstTokenReceived = false;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const chunkLine of lines) {
+                    const trimmed = chunkLine.trim();
+                    if (!trimmed.startsWith('data: ')) continue;
+                    const dataStr = trimmed.slice(6).trim();
+                    if (dataStr === '[DONE]') break;
+
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (parsed.token) {
+                            if (!firstTokenReceived) {
+                                firstTokenReceived = true;
+                                assistantMsg.innerHTML = '';
+                            }
+                            fullText += parsed.token;
+                            tokenCount++;
+                            assistantMsg.innerHTML = fullText.replace(/\n/g, '<br>');
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+                            const tokSec = (tokenCount / (parseFloat(elapsed) || 0.1)).toFixed(1);
+                            document.getElementById('chat-speed').innerText = `${tokSec} tok/s | ${elapsed}s (${tokenCount} tokens)`;
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            clearTimeout(timeoutId);
+            if (!fullText) {
+                assistantMsg.innerText = 'Hello! I am Orchest Swarm AI. Ready for your prompt.';
+            }
         } catch (err) {
-            assistantMsg.innerText = 'Failed to communicate with Swarm Pipeline.';
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                console.log('Inference aborted.');
+            } else {
+                assistantMsg.innerText = 'Failed to communicate with Swarm Pipeline.';
+            }
         } finally {
-            clearInterval(stageAnimInterval);
+            clearTimeout(timeoutId);
+            if (activeStreamAnimInterval) {
+                clearInterval(activeStreamAnimInterval);
+                activeStreamAnimInterval = null;
+            }
             document.querySelectorAll('.connector-pulse').forEach(p => p.classList.remove('animating'));
             document.querySelectorAll('.pipeline-node-card').forEach(card => card.classList.remove('active'));
             if (statusText) statusText.innerText = 'Pipeline Ready';
+
+            isGenerating = false;
+            activeGenerationController = null;
+            if (btnSend) {
+                btnSend.className = 'btn btn-primary btn-chat-send';
+                btnSend.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    <span>Send</span>
+                `;
+            }
         }
     }
 
@@ -1674,15 +1988,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------------------------------------------------------
     // Swarm Inference Engine Power Switch & Periodic Benchmark Handler
     // ---------------------------------------------------------
-    const btnToggleEngine = document.getElementById('btn-toggle-engine');
-    const enginePowerIcon = document.getElementById('btn-engine-power-icon');
-    const enginePowerText = document.getElementById('btn-engine-power-text');
+    const engineMasterBar = document.getElementById('engine-master-bar');
     const engineStateDot = document.getElementById('engine-state-dot');
     const engineStatusTitle = document.getElementById('engine-status-title');
     const engineStatusChip = document.getElementById('engine-status-chip');
+    const btnToggleEngine = document.getElementById('btn-toggle-engine');
+    const enginePowerIcon = document.getElementById('btn-engine-power-icon');
+    const enginePowerText = document.getElementById('btn-engine-power-text');
     const engineCountdownText = document.getElementById('engine-countdown-text');
 
+    const fabWrap = document.getElementById('sticky-engine-fab-wrap');
+    const fabBtn = document.getElementById('sticky-engine-fab');
+    const fabIcon = document.getElementById('fab-engine-icon');
+    const fabTooltip = document.getElementById('fab-engine-tooltip');
+
     let currentEngineEnabled = false;
+    let previousEngineStatus = 'STANDBY';
 
     function formatTimeRemaining(seconds) {
         const mins = Math.floor(seconds / 60);
@@ -1696,8 +2017,31 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) return;
             const data = await res.json();
             currentEngineEnabled = !!data.enabled;
+            const engineState = data.status || (currentEngineEnabled ? 'RUNNING' : 'STANDBY');
 
-            if (currentEngineEnabled) {
+            if (engineState === 'INITIALIZING') {
+                if (engineStateDot) engineStateDot.className = 'engine-state-dot standby';
+                if (engineStatusTitle) engineStatusTitle.innerText = 'Swarm Inference Engine: INITIALIZING';
+                if (engineStatusChip) {
+                    engineStatusChip.innerText = 'Loading Weights (In Progress)';
+                    engineStatusChip.className = 'engine-mode-chip standby';
+                }
+                if (engineCountdownText) {
+                    engineCountdownText.innerHTML = `⏳ <strong>Downloading & Warming Up Model Weights</strong> across cluster... Please wait.`;
+                }
+                if (btnToggleEngine) {
+                    btnToggleEngine.className = 'btn btn-engine-power active';
+                    if (enginePowerIcon) enginePowerIcon.innerText = '⏳';
+                    if (enginePowerText) enginePowerText.innerText = 'Loading Model...';
+                }
+                if (fabBtn) fabBtn.className = 'sticky-engine-fab initializing';
+                if (fabIcon) fabIcon.innerText = '⏳';
+                if (fabTooltip) fabTooltip.innerText = 'Loading Model Weights...';
+            } else if (currentEngineEnabled || engineState === 'RUNNING') {
+                if ((previousEngineStatus === 'INITIALIZING' || previousEngineStatus === 'STANDBY') && engineState === 'RUNNING') {
+                    notifySwarmClusterReady(currentSlicePlan, activeModelName, true);
+                }
+
                 if (engineStateDot) engineStateDot.className = 'engine-state-dot running';
                 if (engineStatusTitle) engineStatusTitle.innerText = 'Swarm Inference Engine: ACTIVE';
                 if (engineStatusChip) {
@@ -1705,13 +2049,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     engineStatusChip.className = 'engine-mode-chip running';
                 }
                 if (engineCountdownText) {
-                    engineCountdownText.innerHTML = `🟢 <strong>Distributed Inference Active</strong>: Serving real-time LLM prompts • Auto-Benchmark is <em>paused</em>.`;
+                    engineCountdownText.innerHTML = `🟢 <strong>Distributed Inference Active</strong>: Model weights warm & loaded in memory • Auto-Benchmark is <em>paused</em>.`;
                 }
                 if (btnToggleEngine) {
                     btnToggleEngine.className = 'btn btn-engine-power active';
                     if (enginePowerIcon) enginePowerIcon.innerText = '⏸️';
                     if (enginePowerText) enginePowerText.innerText = 'Stop / Standby Mode';
                 }
+                if (fabBtn) fabBtn.className = 'sticky-engine-fab running';
+                if (fabIcon) fabIcon.innerText = '⏸️';
+                if (fabTooltip) fabTooltip.innerText = 'Stop / Standby Mode';
             } else {
                 const remainingSec = data.next_benchmark_countdown_sec !== undefined ? data.next_benchmark_countdown_sec : 300;
                 const formattedTime = formatTimeRemaining(remainingSec);
@@ -1730,7 +2077,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (enginePowerIcon) enginePowerIcon.innerText = '▶️';
                     if (enginePowerText) enginePowerText.innerText = 'Start Swarm Inference';
                 }
+                if (fabBtn) fabBtn.className = 'sticky-engine-fab standby';
+                if (fabIcon) fabIcon.innerText = '▶️';
+                if (fabTooltip) fabTooltip.innerText = 'Start Swarm Inference';
             }
+            previousEngineStatus = engineState;
         } catch (err) {
             console.warn('Failed to fetch engine status:', err);
         }
@@ -1741,11 +2092,36 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 btnToggleEngine.disabled = true;
                 const targetState = !currentEngineEnabled;
+                const modelName = (document.getElementById('model-selector')?.value || activeModelName || 'Qwen/Qwen2.5-0.5B-Instruct').split('/').pop();
+
+                if (targetState) {
+                    showToast({
+                        type: 'info',
+                        icon: '⏳',
+                        title: 'Starting Swarm Inference...',
+                        message: `Đang khởi động Swarm Engine và nạp trọng số mô hình <strong>${modelName}</strong> vào bộ nhớ cụm LAN...`,
+                        duration: 4000
+                    });
+                } else {
+                    abortActiveGeneration('⏹ Swarm engine stopped (Standby).');
+                    showToast({
+                        type: 'warn',
+                        icon: '⏸️',
+                        title: 'Swarm Engine Stopped (Standby)',
+                        message: `Đã dừng Swarm Engine và giải phóng RAM/VRAM. Auto-Benchmark đo hiệu năng phần cứng định kỳ 5 phút đã được kích hoạt lại.`,
+                        duration: 6000
+                    });
+                }
+
                 await fetch('/api/engine/toggle', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ enabled: targetState })
                 });
+
+                if (targetState) {
+                    applyPartitionModel(true);
+                }
                 await fetchEngineStatus();
             } catch (err) {
                 console.error('Failed to toggle engine power:', err);
@@ -1753,6 +2129,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnToggleEngine.disabled = false;
             }
         });
+    }
+
+    if (fabBtn) {
+        fabBtn.addEventListener('click', () => {
+            if (btnToggleEngine) {
+                btnToggleEngine.click();
+            }
+        });
+    }
+
+    if (engineMasterBar && fabWrap) {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) {
+                    fabWrap.classList.add('visible');
+                } else {
+                    fabWrap.classList.remove('visible');
+                }
+            });
+        }, { threshold: 0.1 });
+        observer.observe(engineMasterBar);
     }
 
     // ---------------------------------------------------------
