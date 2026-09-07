@@ -125,6 +125,8 @@ class TensorPacket:
                 tensor_bytes = aesgcm.decrypt(nonce, tensor_bytes, None)
 
             tensor = deserialize_tensor(tensor_bytes, device=device)
+            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+                raise ValueError("Tensor payload integrity validation failed: contains NaN or Inf values.")
 
         return msg_type, meta, tensor
 

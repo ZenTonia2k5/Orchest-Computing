@@ -1,0 +1,247 @@
+RESEARCH & DEVELOPMENT PROPOSAL
+ORCHEST COMPUTING
+Runtime Orchestrator for Distributed Large Language Model Inference AcrossHeterogeneous Windows CUDA – macOS MPS Edge Clusters
+Prefill-Oriented Cost Model, KV-Cache-Aware Memory Feasibility, and Held-Out Partition-Regret Evaluation
+Research Topic: Orchest Computing — a distributed LLM inference orchestrator for heterogeneous edge clusters.
+Languages & Frameworks: Python, PyTorch, Hugging Face Transformers, CUDA, PyTorch MPS, gRPC, ZeroMQ, NVML, WMI, macOS System APIs.
+Security Architecture: Mutual TLS (mTLS, X.509), CurveZMQ, CRC32 transport corruption detection, dynamic allowlist.
+ABSTRACT
+This study designs and implements Orchest Computing, a runtime orchestrator for Large Language Model (LLM) inference using contiguous Pipeline Parallelism across heterogeneous personal edge devices (Windows CUDA and macOS Apple Silicon) over a Local Area Network (LAN). The MVP deliberately separates what is optimized from what is measured. Its primary optimization target is single-request Prefill Time-to-First-Token (TTFT) under a one-microbatch execution regime, while concurrent pipeline scheduling and Decode behavior are evaluated separately. The project contributes: (1) a Prefill-oriented Cost Model separating computation and activation communication and incorporating dynamic GQA-aware KV-cache memory; (2) an O(K·L²) Dynamic Programming (DP) solver for contiguous layer partitioning under per-node memory constraints, searched over admissible stage counts κ ≤ K and a fixed node order; (3) rigorous prediction and partition-quality evaluation using MAPE/RMSE, Spearman rank correlation, and held-out partition regret against a Measured Oracle; (4) a practical heterogeneous Windows CUDA + macOS MPS runtime coordinated through resource telemetry; and (5) security and reliability mechanisms including mTLS, certificate identity, allowlisting, transport integrity, and session-level Safe Failure.
+1. RESEARCH OVERVIEW & MOTIVATION
+The rapid evolution of foundational models such as Llama, Qwen, and Gemma has increased demand for local inference on personal devices for privacy and reduced cloud dependency. However, model parameters, activation buffers, and KV-cache requirements can exceed the memory budget of an individual machine. Pooling multiple co-located consumer devices over a LAN offers a practical scale-out mechanism for expanding local inference capability.
+Systems including exo, Petals, PipeEdge, and PyTorch Pipeline Parallelism demonstrate that distributed inference is feasible. The proposed research targets a narrower and measurable gap: modeling Prefill and Decode separately, jointly accounting for heterogeneous compute, memory, activation-transfer overhead, dynamic GQA-aware KV-cache requirements, and evaluating whether model-driven partitions remain close to empirically best partitions on held-out physical hardware.
+1.1 Related Work Comparison Matrix
+Axis
+PipeEdge
+exo
+Petals
+PyTorch Pipeline
+Orchest Computing
+Primary focus
+Heterogeneous compute/memory/network-aware partitioning
+Topology/resource-aware automatic parallelization
+Collaborative/swarm distributed inference
+Pipeline execution/runtime
+Heterogeneous edge orchestration with measurable cost-guided partitioning
+Prefill / Decode
+General distributed inference
+Execution-aware parallelization
+Throughput-oriented serving
+Pipeline execution
+Prefill-oriented primary objective; Decode measured separately
+KV-cache
+Not central to placement objective
+Resource/runtime aware
+Distributed serving state
+Pipeline runtime state
+Dynamic GQA-aware KV-cache memory model
+Heterogeneity
+Compute, memory, network
+Device resources and network/topology
+Collaborative heterogeneous nodes
+Runtime/backend focused
+Windows CUDA + macOS MPS with measured compute, memory, thermal and network telemetry
+Node order / selection
+System-dependent
+Topology/resource-aware
+Dynamic discovery/routing
+Stage assignment
+Fixed node order in MVP; arbitrary subset/permutation is future work
+Adaptation
+Partition/runtime mechanisms
+Automatic placement/execution
+Distributed adaptation
+Pipeline scheduling
+Session-boundary repartitioning; no intra-request migration
+Evaluation
+System performance
+Latency/throughput
+Distributed throughput
+Pipeline trace/bubble
+Prediction error, held-out partition regret, TTFT, ITL, throughput, memory, communication
+LOIP is included as a closer related system because it addresses heterogeneous cost modeling and offloading-aware Pipeline Parallelism. The proposal therefore does not claim heterogeneous partitioning itself as novel. The intended contribution is the combination of a measurable Prefill-oriented model, GQA-aware KV-cache feasibility, heterogeneous Windows CUDA/MPS execution, and rigorous held-out partition-regret evaluation.
+2. NOVEL CONTRIBUTIONS & RESEARCH QUESTIONS
+2.1 Novel Contributions
+· Contribution 1 — Prefill-Oriented Cost Model: separates stage computation and activation communication for single-request Prefill TTFT, while treating Decode as a separately measured runtime behavior.
+· Contribution 2 — KV-Cache- and Memory-Aware Feasibility: models dynamic GQA-aware KV-cache growth, transient execution memory, transport buffers, and allocator/headroom effects under a hard per-node memory constraint.
+· Contribution 3 — Contiguous Layer Dynamic Programming: solves the L-layer, K-node contiguous partitioning problem in O(K·L²) under a configurable memory safety ceiling, with a sweep over admissible stage counts κ ≤ K.
+· Contribution 4 — Held-Out Partition Quality Evaluation: measures model prediction error and compares DP, heuristics, and a Measured Oracle using independent oracle-selection and oracle-evaluation runs.
+· Contribution 5 — Heterogeneous Edge Runtime and Reliability: coordinates Windows CUDA and macOS MPS devices over a LAN using resource telemetry, explicit transport protocols, secure communication, and session-level Safe Failure.
+2.2 Research Questions
+· RQ1 (Scaling Beyond Limits): Can the system execute models whose working set exceeds the memory capacity of every individual node but fits within aggregate cluster memory and an actually feasible partition?
+· RQ2 (Distributed Overhead): For models that fit on one node, how much faster or slower is distributed inference than the strongest single-node baseline due to LAN communication, synchronization, and pipeline overhead?
+· RQ3 (Worker Capacity): Can the system remain stable as context length, active sequences, and batch size approach individual worker memory limits?
+· RQ4 (Numerical Fidelity): Does heterogeneous distributed inference preserve numerical and generation fidelity relative to controlled single-backend references?
+· RQ5 (Partition Quality): How much single-request Prefill TTFT improvement does DP achieve over Equal-layer, Memory-proportional, and Compute-aware heuristics, and how close is it to the held-out Measured Oracle?
+· RQ6 (Distributed Break-even): Under what model sizes, workloads, network conditions, and concurrency levels does distributed inference break even with or outperform single-node or offload baselines?
+· RQ7 (Cost Model Fidelity): How accurately does the Cost Model predict stage latency and memory demand on held-out workloads, using MAPE/RMSE, peak-memory error, Spearman correlation, and partition regret?
+· RQ8 (Safety-Ceiling Sensitivity): How does the memory safety parameter α affect feasibility, OOM incidence, usable capacity, and partition quality?
+3. PROPOSED SOLUTION & SYSTEM ARCHITECTURE
+Orchest Computing adopts an Orchestrator–Worker architecture. A designated Host Orchestrator acts as cluster leader, while worker nodes execute assigned contiguous blocks of Transformer layers.
+· Host Orchestrator: node registry, telemetry aggregation, cluster profile, Cost Model calibration, DP partitioning, and session management.
+· Worker Nodes: execute assigned layer ranges [i..j], maintain runtime state, report telemetry, and exchange activations through the Transport Abstraction Layer.
+· Node Lifecycle: Auto Discovery → Node Registry → Heartbeat → Node Profiling → Resource Monitoring → Partition Planning → Pipeline Execution.
+· Telemetry: CPU utilization, effective compute throughput, RAM/VRAM or Unified Memory, thermal state, network RTT/bandwidth, and runtime status.
+· Contiguous Layer Partitioning: each worker receives consecutive layers, limiting inter-node traffic to activation boundaries.
+· Session-Boundary Repartitioning: partitions remain fixed during a request; repartitioning occurs only between sessions.
+· Scope boundary: live migration, tensor parallelism, operator placement, arbitrary node-order optimization, and online intra-request repartitioning are outside the MVP.
+4. OPTIMIZATION MODEL & METHODOLOGY
+4.1 Execution Regime and Optimization Target
+The MVP DP optimizes single-request Prefill TTFT under a one-microbatch execution regime. This is a deliberate scope restriction: the additive DP recurrence does not claim throughput-optimal scheduling for overlapping microbatches. Asynchronous pipeline execution, concurrency, and microbatching are instead evaluated as a secondary runtime study.
+T_pipeline(m) ≈ Σₛ Cₛ + (m − 1) · maxₛ Cₛ
+This approximate makespan expression is used to characterize bottlenecks and pipeline effects. It is not the primary MVP DP objective. A future bottleneck-aware scheduler may optimize this execution regime directly.
+4.2 End-to-End TTFT Definition
+Stage-level Prefill cost is distinguished from complete user-visible TTFT:
+TTFT = T_input + T_embedding + T_prefill + T_final-norm + T_lm-head + T_sampling + T_return
+The exact placement or fusion of these components is recorded for each implementation. Fixed-stage components such as embedding, final normalization, and LM-head are included in the relevant stage cost when they are part of the execution path.
+4.3 Formal Working-Set Memory Model
+M_stage(k,i,j) = M_layers + M_fixed-stage + M_KV + M_transient + M_transport + M_allocator
+· M_layers: parameter storage of assigned layers under declared precision/quantization.
+· M_fixed-stage: embedding, final normalization, LM-head, framework state, or other stage-fixed objects.
+· M_KV: dynamic key/value cache for layers assigned to the stage.
+· M_transient: peak temporary activations and backend workspaces.
+· M_transport: peak send/receive, staging, and streaming/chunking buffers.
+· M_allocator: allocator overhead, cached blocks, fragmentation reserve, and other measured allocation effects.
+4.4 GQA-Aware KV-Cache Model
+M_KV(i,j,S_max,N_seq) = 2 × L_seg × N_seq × n_kv_heads × d_head × S_max × bytes_per_KV_element
+Here L_seg = j − i + 1 and N_seq is the number of simultaneously active sequences. The implementation reads n_kv_heads, head dimension, layer count, and dtype directly from the model configuration. Batch and concurrency are mapped to N_seq without double-counting. For Qwen2.5-family configurations, key/value heads rather than attention heads are used.
+4.5 Memory Feasibility & Safety-Ceiling Sensitivity
+M_stage(k,i,j) ≤ α · M_usable(k)
+α is a configurable safety ceiling, not a universal constant or OOM guarantee. The MVP may begin with α = 0.90, while sensitivity analysis evaluates values such as 0.80, 0.85, 0.90, and 0.95 against OOM incidence, fragmentation, feasible partitions, and performance.
+4.6 Activation Size and Communication Cost Model
+Activation payload depends on the partition boundary, batch/concurrency, prompt size, d_model, and element size. The communication model therefore separates synchronization, device/host staging, encoding, network transfer, decoding, and destination-device staging:
+T_comm = T_sync + T_D2H + T_encode + T_network + T_decode + T_H2D
+T_network ≈ T_latency + ActivationBytes / EffectiveBandwidth
+· ActivationBytes is derived from the actual boundary tensor shape, workload batch/concurrency, and dtype.
+· Transport specification defines chunking/streaming, gRPC message-size limits, flow control, and connection management.
+· CUDA workers measure device-to-host and host-to-device staging, including pinned-memory policy where used.
+· Synchronization points are measured explicitly.
+· Peak send/receive buffers are included in M_transport.
+4.7 Prefill Stage Cost Model
+C_pre(k,i+1,j) = T_compute_pre(k,i+1,j,S_prefill,N_seq) + T_comm(k−1,k,ActivationSize(i))
+T_compute_pre is estimated from measured effective stage throughput or calibrated profiling functions rather than theoretical peak TFLOPs alone. The first stage has no predecessor communication term.
+4.8 Contiguous Dynamic Programming Partitioning
+DP[k][j] = min_{0 ≤ i < j} { DP[k−1][i] + C_pre(k,i+1,j) }
+Initialization: DP[0][0] = 0 and DP[0][j] = ∞ for j > 0. Candidates violating the hard memory constraint are pruned. The recurrence is evaluated for every admissible stage count κ = 1..K using the corresponding prefix of the fixed node order.
+P* = argmin_{1 ≤ κ ≤ K} DP[κ][L]
+The result is optimal only within the defined search space: contiguous layer partitions, fixed node order, and a prefix of that order. It is not a global optimum over arbitrary node subsets or node permutations. Time complexity is O(K·L²) and space complexity is O(K·L).
+4.9 Concurrency, Microbatching, and Pipeline Scheduling Study
+· Single-request regime: one microbatch; primary optimization metric is TTFT.
+· Concurrent regime: multiple microbatches/active sequences; primary measurements are makespan, throughput, ITL, and bubble/waiting waste.
+· The study identifies when the single-request DP remains effective and when a future bottleneck-aware scheduler is necessary.
+4.10 Cost-Model Calibration and Sensitivity Analysis
+Calibration data are separated from final evaluation data. Sensitivity analyses vary α, prompt length, active sequences, batch size, network RTT, bandwidth, and admissible stage count. Node-order sensitivity is reported, while arbitrary node permutation is not optimized in the MVP.
+4.11 Partition Quality and Held-Out Measured Oracle
+A Measured Oracle is constructed only on small clusters where exhaustive enumeration of feasible partitions is practical. Each scenario uses two independent datasets to avoid selection bias from measurement noise.
+· Oracle-selection runs: measure each feasible partition repeatedly and select the partition with the best median TTFT.
+· Oracle-evaluation runs: lock the selected oracle partition and independently measure it alongside DP and heuristic baselines.
+· Calibration/profiling data and oracle-selection measurements are not reused as the sole evidence for final DP quality.
+Realized Regret = TTFT_DP − TTFT_Oracle
+Normalized Regret = (TTFT_DP − TTFT_Oracle) / TTFT_Oracle
+5. MVP SCOPE & BACKEND STRATEGY
+· 18-week MVP: unified PyTorch runtime; Windows CUDA with NVML/WMI; macOS PyTorch MPS with native APIs; prototype clusters of 2 and 3 nodes.
+· Runtime consistency: PyTorch is locked as the core execution framework.
+· Model slicing: AutoModelSlicer identifies and deploys contiguous Transformer layer segments.
+· Benchmark precision: one common precision is explicitly declared and applied consistently; native model dtype is never silently assumed.
+· MLX is excluded from the core MVP and reserved for future extension.
+· gRPC and ZeroMQ are benchmarked through a common Transport Abstraction Layer.
+6. SECURITY ARCHITECTURE & FAULT TOLERANCE
+· mTLS: X.509 mutual authentication and protected node communication.
+· CurveZMQ: optional authenticated/encrypted ZeroMQ configuration.
+· Dynamic Allowlist: strict authorization of workers joining the cluster.
+· CRC32 Transport Integrity: lightweight corruption detection; cryptographic authenticity/confidentiality remain with mTLS/CurveZMQ.
+· Payload validation: NaN/Inf checks after payload decode.
+· Safe Failure: abort active request → re-profile surviving nodes → recompute partition → reload required weights → serve new requests/sessions.
+7. NON-FUNCTIONAL REQUIREMENTS
+7.1 Numerical Correctness & Generation Fidelity
+· Compare distributed inference against controlled single-node eager PyTorch references on CUDA and MPS where possible.
+· Teacher forcing on a fixed prompt set enables logit-level comparison.
+· Metrics: Max/Mean Absolute Logit Error, Relative Logit Error, Cosine Similarity, directional KL Divergence, Top-1/Top-k agreement, and Greedy Token Agreement.
+· Target thresholds: Relative Logit Error ≤ 1e−3; Cosine Similarity ≥ 0.9999; Directional KL Divergence ≤ 1e−4; Greedy Token Agreement = 100% on 100 fixed prompts under deterministic same-backend controls.
+· Cross-backend CUDA/MPS differences are reported statistically.
+· Transport integrity and NaN/Inf checks are enforced at the tensor-payload boundary.
+7.2 Runtime Performance & Resource Metrics
+· Performance: end-to-end TTFT, stage Prefill latency, ITL, Generation Throughput, p50/p95 latency, and concurrent-pipeline makespan.
+· Resources: CPU/GPU utilization, RAM/VRAM or Unified Memory, temperature, and allocator/cached-memory behavior.
+· System overhead: activation volume, scheduling time, synchronization, pipeline bubble/waiting, serialization/deserialization, and staging-buffer memory.
+8. BENCHMARK DESIGN & RIGOROUS PROTOCOL
+8.1 Five Empirical Sub-Studies
+· 1. Core Matrix Study: Qwen2.5 0.5B, 1.5B, 3B, and 7B; compare DP, Equal-layer, Memory-proportional, Compute-aware, and Single-node baselines.
+· 2. Network Impact Study: RTT approximately 0.5–20 ms and bandwidth 100 Mbps–1 Gbps using physical measurements plus controlled emulation where necessary.
+· 3. Concurrency & KV-cache Study: S_prompt = 128–2048, S_gen = 64–512, B ∈ {1,2,4}, with explicit mapping from batch/concurrency to N_seq.
+· 4. Security Ablation Study: protected transport versus clearly defined plaintext/raw transport.
+· 5. Thermal & Stability Study: sustained inference and thermal throttling on Windows laptops and MacBooks.
+8.2 Baselines
+· Baseline 1 — Single-node: strongest standalone node when the model fits.
+· Baseline 2 — Equal-layer Partition.
+· Baseline 3 — Memory-proportional Partition under the same hard memory constraint.
+· Baseline 4 — Compute-aware Partition using measured effective throughput.
+· Baseline 5 — Measured Oracle using exhaustive feasible partitions plus independent selection/evaluation runs.
+· Baseline 6 — Single-node Offload when CPU/Unified-Memory offloading is feasible.
+All baselines use the same model, precision, tokenizer, decoding settings, workload, memory constraint, and fixed node ordering.
+8.3 Statistical & Environmental Protocol
+· 5–10 independent runs per scenario; headline measurements repeated at least 10 times where feasible.
+· Report median, p95, and Bootstrap 95% confidence intervals; account for run-level dependence where practical.
+· Warm-up runs precede measurement; execution order is randomized; common random seed is fixed.
+· Approximately 60-second cool-down intervals between measurement blocks where appropriate.
+· Fix GPU drivers, OS builds, model revisions/hashes, software versions, power source, prompt set, sequence lengths, and benchmark precision.
+· Keep profiling/calibration, oracle-selection, and oracle-evaluation datasets separate.
+9. 18-WEEK IMPLEMENTATION TIMELINE
+Phase
+Timeline
+Key Objectives & Work Scope
+Deliverables
+P1: Survey & Design
+Weeks 1–4
+Literature review; related-work matrix; execution-regime and TTFT definition; Working Set/KV-cache formulation; transport/chunking/flow-control specification; DP; sensitivity and oracle protocol; benchmark design.
+Detailed proposal; Cost Model/KV-cache specification; Working Set and transport specifications; oracle protocol; experimental plan.
+P2: Core Engine
+Weeks 5–9
+Auto Discovery, Registry, Heartbeat, Profiling, Resource Monitor; NVML/WMI and macOS APIs; effective compute profiling; usable-memory estimation; Cost Model; KV-cache estimator; DP; mTLS/certificates; CRC32.
+Core engine; profiling; calibrated Cost Model; KV estimator; DP; certificate generator; secure transport telemetry.
+P3: Runtime & Pipeline
+Weeks 10–14
+Pipeline runtime; AutoModelSlicer; Transport Abstraction; asynchronous execution; chunking/streaming; scheduling; session-boundary repartitioning; Safe Failure; 2/3-node integration.
+Distributed runtime; slicing; transport/scheduler; Safe Failure; integration tests; physical-cluster validation.
+P4: Benchmark & Finalization
+Weeks 15–18
+Five empirical studies; held-out prediction error; Spearman; independent oracle selection/evaluation; regret; security/thermal/network/concurrency studies; statistical analysis.
+Final prototype; empirical dataset; benchmark results; documentation; research report; defense-ready codebase.
+10. FUTURE WORK
+· MLX Native Adapter for Apple Silicon.
+· Online Repartitioning and Live Migration of weights/KV-cache state.
+· Hybrid Pipeline + Tensor Parallelism and operator-level placement.
+· Node-order optimization, topology optimization, and arbitrary node-subset selection.
+· Joint optimization of Prefill TTFT and Decode throughput, including Pareto-frontier analysis and a bottleneck-aware microbatch scheduler.
+· Reliability-aware scheduling, checkpointing, replication, and automatic failure recovery.
+· ML-based predictive orchestration of compute, thermal state, and network bandwidth.
+11. TECHNOLOGY STACK
+Category
+Technology
+Programming Language
+Python
+AI/ML Framework
+PyTorch; Hugging Face Transformers
+Hardware Backends
+NVIDIA CUDA; PyTorch MPS / Metal Performance Shaders
+Hardware Monitoring
+NVIDIA NVML; Windows WMI; macOS System APIs
+Communication
+gRPC; ZeroMQ; Transport Abstraction Layer
+Security
+mTLS; X.509 digital certificates; CurveZMQ; dynamic allowlist; CRC32 / tensor checksums
+Core Algorithms
+Contiguous Layer Partitioning; Dynamic Programming; Cost Modeling; GQA-aware KV-cache estimation; memory feasibility
+Runtime Components
+Host Orchestrator; Worker; Node Registry; Heartbeat; Resource Monitor; Pipeline Executor; AutoModelSlicer; Scheduler; Session Repartitioner
+12. SUMMARY - CONTRIBUTION AND SCOPE
+· Contribution 1 — Cost Model: measurable Prefill-oriented modeling of heterogeneous compute, complete activation communication overhead, and dynamic GQA-aware KV-cache requirements.
+· Contribution 2 — Partitioning: O(K·L²) contiguous-layer DP under a hard per-node memory constraint with safety-ceiling sensitivity analysis.
+· Contribution 3 — Evaluation: prediction error, peak-memory error, Spearman rank correlation, and held-out absolute/normalized partition regret against an independently evaluated Measured Oracle.
+· Contribution 4 — Heterogeneous Runtime: PyTorch-based Windows CUDA + macOS MPS pipeline runtime coordinated through resource telemetry.
+· Contribution 5 — Reliability/Security: mTLS, certificate identity, allowlisting, tensor integrity, and Safe Failure with session-level repartitioning.
+· MVP boundary: no live migration, intra-layer tensor parallelism, operator placement, arbitrary node permutation/subset optimization, online intra-request repartitioning, joint TTFT/Decode optimizer, Pareto-frontier optimization, or MLX core runtime.
+13. MODEL-CONFIGURATION & IMPLEMENTATION NOTE
+The KV-cache implementation obtains n_kv_heads, n_attention_heads, head dimension, number of layers, and model dtype from the actual model configuration at runtime. Activation shapes, batch/concurrency, prompt length, and element size are likewise obtained from the actual execution configuration rather than hard-coded assumptions.
+14. FINAL METHODOLOGICAL PRINCIPLE
+Orchest Computing follows a strict methodological principle: separate what is optimized from what is measured. Within the MVP, the DP optimizer targets single-request Prefill TTFT under a one-microbatch execution regime, using a calibrated Cost Model and hard memory feasibility constraints. Concurrent pipeline scheduling, Decode behavior, thermal effects, security overhead, network sensitivity, and distributed break-even conditions are systematically measured rather than claimed as jointly optimized. The DP's optimality claim is restricted to contiguous partitions under a fixed node order and admissible node prefixes. Held-out oracle selection/evaluation and sensitivity analysis ensure that reported partition quality is not an artifact of measurement noise or a particular memory-safety setting.

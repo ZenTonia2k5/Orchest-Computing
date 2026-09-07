@@ -1,5 +1,5 @@
 import math
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 from ..profiler.node_profiler import NodeMetrics
 from ..profiler.model_profiler import LayerProfile
 
@@ -43,17 +43,20 @@ class PartitionCostCalculator:
         num_layers: int,
         hidden_size: int = 2048,
         num_heads: int = 16,
+        num_kv_heads: Optional[int] = None,
         max_seq_len: int = 2048,
         batch_size: int = 1,
         concurrency: int = 1,
-        dtype_bytes: int = 2,
+        dtype_bytes: Union[int, float] = 2,
     ) -> float:
         """
-        Calculates dynamic KV Cache memory footprint in MB:
-        M_KV-cache = 2 (Key + Value) * num_layers * 2 * num_heads * (hidden_size / num_heads) * max_seq_len * batch_size * concurrency * dtype_bytes
+        Calculates dynamic GQA-aware KV Cache memory footprint in MB:
+        M_KV = 2 (Key + Value) * num_layers * concurrency * num_kv_heads * head_dim * max_seq_len * batch_size * dtype_bytes
+        Follows Equation in Proposal Section 4.4.
         """
         head_dim = hidden_size // max(num_heads, 1)
-        total_elements = 2 * num_layers * num_heads * head_dim * max_seq_len * max(batch_size, 1) * max(concurrency, 1)
+        effective_kv_heads = num_kv_heads if (num_kv_heads is not None and num_kv_heads > 0) else num_heads
+        total_elements = 2 * num_layers * max(concurrency, 1) * effective_kv_heads * head_dim * max_seq_len * max(batch_size, 1)
         total_bytes = total_elements * dtype_bytes
         return total_bytes / (1024.0 * 1024.0)
 
@@ -63,7 +66,7 @@ class PartitionCostCalculator:
         hidden_size: int,
         prompt_len: int = 1,
         batch_size: int = 1,
-        dtype_bytes: int = 2,
+        dtype_bytes: Union[int, float] = 2,
     ) -> float:
         """
         Estimates peak activation buffer size during forward pass in MB:
@@ -83,7 +86,9 @@ class PartitionCostCalculator:
         batch_size: int = 1,
         concurrency: int = 1,
         runtime_reserve_mb: float = 0.0,
-        dtype_bytes: int = 2,
+        dtype_bytes: Union[int, float] = 2,
+        num_heads: Optional[int] = None,
+        num_kv_heads: Optional[int] = None,
     ) -> float:
         """
         Calculates total Model Working Set for layers [start_idx : end_idx]:
@@ -98,21 +103,27 @@ class PartitionCostCalculator:
 
         hidden_sz = sub_layers[0].output_shape[2] if (sub_layers and len(sub_layers[0].output_shape) > 2) else 2048
         seq_len = max_seq_len if max_seq_len is not None else min(prompt_len + 128, 2048)
+
+        layer_num_heads = num_heads or getattr(sub_layers[0], "num_heads", 16)
+        layer_num_kv_heads = num_kv_heads or getattr(sub_layers[0], "num_kv_heads", None)
+        effective_dtype = getattr(sub_layers[0], "dtype_bytes", dtype_bytes) if (sub_layers and dtype_bytes == 2) else dtype_bytes
         
         m_peak_act = cls.estimate_peak_activation_mb(
             hidden_size=hidden_sz,
             prompt_len=prompt_len,
             batch_size=batch_size,
-            dtype_bytes=dtype_bytes,
+            dtype_bytes=effective_dtype,
         )
 
         m_kv_cache = cls.estimate_kv_cache_mb(
             num_layers=num_sub_layers,
             hidden_size=hidden_sz,
+            num_heads=layer_num_heads,
+            num_kv_heads=layer_num_kv_heads,
             max_seq_len=seq_len,
             batch_size=batch_size,
             concurrency=concurrency,
-            dtype_bytes=dtype_bytes,
+            dtype_bytes=effective_dtype,
         )
 
         return m_weights + m_peak_act + m_kv_cache + runtime_reserve_mb
@@ -130,10 +141,14 @@ class PartitionCostCalculator:
         batch_size: int = 1,
         concurrency: int = 1,
         runtime_reserve_mb: float = 0.0,
+        alpha: float = 0.90,
+        num_heads: Optional[int] = None,
+        num_kv_heads: Optional[int] = None,
     ) -> float:
         """
         Calculates execution time in milliseconds to compute layers[start_idx : end_idx] on a given node.
-        Enforces hard memory constraint: Returns float('inf') if Model Working Set exceeds 90% usable memory.
+        Enforces configurable hard memory constraint: M_stage(k,i,j) <= alpha * M_usable(k).
+        Returns float('inf') if Model Working Set exceeds alpha * usable memory.
         """
         sub_layers = layers[start_idx : end_idx + 1]
         num_sub_layers = len(sub_layers)
@@ -149,12 +164,14 @@ class PartitionCostCalculator:
             batch_size=batch_size,
             concurrency=concurrency,
             runtime_reserve_mb=runtime_reserve_mb,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
         )
 
         avail_mem = cls.get_node_available_memory_mb(node)
         
-        # Hard memory constraint: 90% threshold safety margin against OOM
-        if total_working_set_mb > (avail_mem * 0.90):
+        # Hard memory constraint: alpha threshold safety ceiling against OOM (Proposal Section 4.5)
+        if total_working_set_mb > (avail_mem * alpha):
             return float("inf")
 
         total_flops_per_token = sum(l.flops_per_token for l in sub_layers)

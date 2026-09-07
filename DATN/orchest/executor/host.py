@@ -246,11 +246,16 @@ class HostOrchestrator:
         num_layers: int = 28,
         hidden_size: int = 2048,
         intermediate_size: int = 5632,
+        num_heads: int = 16,
+        num_kv_heads: Optional[int] = None,
         partition_mode: str = "auto",
         custom_ratios: Optional[List[float]] = None,
+        alpha: float = 0.90,
+        dtype_bytes: Optional[float] = None,
     ) -> List[SliceAssignment]:
         """
         Runs Dynamic Programming partition algorithm or Ratio Cutting over discovered LAN nodes.
+        Enforces GQA-aware KV-cache modeling and configurable memory safety ceiling alpha.
         """
         cluster_nodes = self.get_cluster_topology(include_disabled=False, include_self=True)
         if not cluster_nodes:
@@ -262,16 +267,22 @@ class HostOrchestrator:
             setattr(local_node, "enabled", True)
             cluster_nodes = [local_node]
 
-        logger.info(f"Profiling {num_layers} layers for model {model_name}...")
+        if dtype_bytes is None:
+            dtype_bytes = 0.5 if any(s in model_name for s in ["14B", "20B", "27b", "32B"]) else 2.0
+
+        logger.info(f"Profiling {num_layers} layers for model {model_name} (dtype_bytes={dtype_bytes}, num_heads={num_heads}, num_kv_heads={num_kv_heads})...")
         layers = ModelProfiler.profile_transformer_layers(
             layers=[None] * num_layers,  # Simulated layer objects for profile calculation
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            dtype_bytes=dtype_bytes,
         )
 
         ratios = custom_ratios if (partition_mode == "ratio" and custom_ratios) else None
-        logger.info(f"Running Partitioning (mode={partition_mode}, ratios={ratios}) across {len(cluster_nodes)} enabled nodes...")
-        slice_plan = self.partitioner.partition(layers=layers, nodes=cluster_nodes, ratios=ratios)
+        logger.info(f"Running Partitioning (mode={partition_mode}, alpha={alpha}, ratios={ratios}) across {len(cluster_nodes)} enabled nodes...")
+        slice_plan = self.partitioner.partition(layers=layers, nodes=cluster_nodes, ratios=ratios, alpha=alpha)
         self.current_slice_plan = slice_plan
         self.active_model_name = model_name
 

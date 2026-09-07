@@ -11,12 +11,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let modelConfigs = {
         "Qwen/Qwen2.5-0.5B-Instruct": { num_layers: 24 },
         "Qwen/Qwen2.5-1.5B-Instruct": { num_layers: 28 },
-        "meta-llama/Llama-3.2-1B": { num_layers: 16 },
-        "meta-llama/Llama-3.2-3B": { num_layers: 28 },
+        "Qwen/Qwen2.5-3B-Instruct": { num_layers: 36 },
         "Qwen/Qwen2.5-7B-Instruct": { num_layers: 28 },
-        "meta-llama/Meta-Llama-3.1-8B-Instruct": { num_layers: 32 },
         "google/gemma-2-9b-it": { num_layers: 42 },
         "Qwen/Qwen2.5-14B-Instruct": { num_layers: 48 },
+        "Qwen/Qwen2.5-20B-Instruct": { num_layers: 40 },
         "google/gemma-2-27b-it": { num_layers: 46 },
         "Qwen/Qwen2.5-32B-Instruct": { num_layers: 64 },
     };

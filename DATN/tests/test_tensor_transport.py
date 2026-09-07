@@ -171,3 +171,29 @@ def test_tensor_transport_grpc_transmission():
     assert torch.equal(tensor1, sample_tensor)
 
 
+def test_nan_inf_payload_rejection():
+    """
+    Verifies that unpacked tensor payloads containing NaN or Inf raise ValueError
+    to prevent error propagation within the pipeline (Non-Functional Requirement 7.1).
+    """
+    nan_tensor = torch.tensor([[1.0, float("nan")], [3.0, 4.0]], dtype=torch.float32)
+    packet_bytes = TensorPacket.pack(
+        msg_type=MessageType.FORWARD_TENSOR,
+        meta={"prompt_id": "test_nan"},
+        tensor=nan_tensor,
+    )
+
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        _ = TensorPacket.unpack(packet_bytes)
+
+    inf_tensor = torch.tensor([[1.0, 2.0], [float("inf"), 4.0]], dtype=torch.float32)
+    packet_bytes_inf = TensorPacket.pack(
+        msg_type=MessageType.FORWARD_TENSOR,
+        meta={"prompt_id": "test_inf"},
+        tensor=inf_tensor,
+    )
+
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        _ = TensorPacket.unpack(packet_bytes_inf)
+
+

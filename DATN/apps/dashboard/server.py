@@ -36,16 +36,15 @@ local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, aut
 
 
 MODEL_CONFIGS = {
-    "Qwen/Qwen2.5-0.5B-Instruct": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864, "params": "0.5B"},
-    "Qwen/Qwen2.5-1.5B-Instruct": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960, "params": "1.5B"},
-    "meta-llama/Llama-3.2-1B": {"num_layers": 16, "hidden_size": 2048, "intermediate_size": 8192, "params": "1B"},
-    "meta-llama/Llama-3.2-3B": {"num_layers": 28, "hidden_size": 3072, "intermediate_size": 8192, "params": "3B"},
-    "Qwen/Qwen2.5-7B-Instruct": {"num_layers": 28, "hidden_size": 3584, "intermediate_size": 18944, "params": "7B"},
-    "meta-llama/Meta-Llama-3.1-8B-Instruct": {"num_layers": 32, "hidden_size": 4096, "intermediate_size": 14336, "params": "8B"},
-    "google/gemma-2-9b-it": {"num_layers": 42, "hidden_size": 3584, "intermediate_size": 14336, "params": "10B"},
-    "Qwen/Qwen2.5-14B-Instruct": {"num_layers": 48, "hidden_size": 5120, "intermediate_size": 27648, "params": "14B"},
-    "google/gemma-2-27b-it": {"num_layers": 46, "hidden_size": 4608, "intermediate_size": 36864, "params": "27B"},
-    "Qwen/Qwen2.5-32B-Instruct": {"num_layers": 64, "hidden_size": 5120, "intermediate_size": 27648, "params": "32B"},
+    "Qwen/Qwen2.5-0.5B-Instruct": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864, "params": "0.5B", "num_heads": 14, "num_kv_heads": 2},
+    "Qwen/Qwen2.5-1.5B-Instruct": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960, "params": "1.5B", "num_heads": 12, "num_kv_heads": 2},
+    "Qwen/Qwen2.5-3B-Instruct": {"num_layers": 36, "hidden_size": 2048, "intermediate_size": 11008, "params": "3B", "num_heads": 16, "num_kv_heads": 2},
+    "Qwen/Qwen2.5-7B-Instruct": {"num_layers": 28, "hidden_size": 3584, "intermediate_size": 18944, "params": "7B", "num_heads": 28, "num_kv_heads": 4},
+    "google/gemma-2-9b-it": {"num_layers": 42, "hidden_size": 3584, "intermediate_size": 14336, "params": "10B", "num_heads": 16, "num_kv_heads": 8},
+    "Qwen/Qwen2.5-14B-Instruct": {"num_layers": 48, "hidden_size": 5120, "intermediate_size": 13824, "params": "14B", "num_heads": 40, "num_kv_heads": 8},
+    "Qwen/Qwen2.5-20B-Instruct": {"num_layers": 40, "hidden_size": 4096, "intermediate_size": 22016, "params": "20B", "num_heads": 32, "num_kv_heads": 8},
+    "google/gemma-2-27b-it": {"num_layers": 46, "hidden_size": 4608, "intermediate_size": 36864, "params": "27B", "num_heads": 32, "num_kv_heads": 16},
+    "Qwen/Qwen2.5-32B-Instruct": {"num_layers": 64, "hidden_size": 5120, "intermediate_size": 27648, "params": "32B", "num_heads": 40, "num_kv_heads": 8},
 }
 
 
@@ -54,8 +53,12 @@ class PartitionRequest(BaseModel):
     num_layers: Optional[int] = None
     hidden_size: Optional[int] = None
     intermediate_size: Optional[int] = None
+    num_heads: Optional[int] = None
+    num_kv_heads: Optional[int] = None
     partition_mode: str = "auto"
     custom_ratios: Optional[List[float]] = None
+    alpha: Optional[float] = 0.90
+    dtype_bytes: Optional[float] = None
 
 
 class GenerateRequest(BaseModel):
@@ -321,18 +324,25 @@ def clear_worker_history():
 
 @app.post("/api/partition")
 def trigger_partition(req: PartitionRequest):
-    cfg = MODEL_CONFIGS.get(req.model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+    cfg = MODEL_CONFIGS.get(req.model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864, "num_heads": 14, "num_kv_heads": 2})
     num_layers = req.num_layers or cfg["num_layers"]
     hidden_size = req.hidden_size or cfg["hidden_size"]
     intermediate_size = req.intermediate_size or cfg["intermediate_size"]
+    num_heads = req.num_heads or cfg.get("num_heads", 16)
+    num_kv_heads = req.num_kv_heads or cfg.get("num_kv_heads", None)
+    alpha = req.alpha if req.alpha is not None else 0.90
 
     slice_plan = host_orchestrator.plan_model_slicing(
         model_name=req.model_name,
         num_layers=num_layers,
         hidden_size=hidden_size,
         intermediate_size=intermediate_size,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
         partition_mode=req.partition_mode,
         custom_ratios=req.custom_ratios,
+        alpha=alpha,
+        dtype_bytes=req.dtype_bytes,
     )
     host_orchestrator.deploy_slice_plan()
     return {
@@ -340,6 +350,7 @@ def trigger_partition(req: PartitionRequest):
         "model_name": req.model_name,
         "num_layers": num_layers,
         "partition_mode": req.partition_mode,
+        "alpha": alpha,
         "slice_plan": [s.to_dict() for s in slice_plan],
     }
 

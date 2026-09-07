@@ -1,5 +1,5 @@
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -14,6 +14,9 @@ class LayerProfile:
     flops_per_token: float
     output_shape: List[int]
     output_tensor_bytes: int
+    num_heads: int = 16
+    num_kv_heads: Optional[int] = None
+    dtype_bytes: float = 2.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -26,7 +29,7 @@ class ModelProfiler:
     """
 
     @staticmethod
-    def estimate_layer_flops(module: nn.Module, hidden_size: int, intermediate_size: int) -> float:
+    def estimate_layer_flops(module: Optional[nn.Module], hidden_size: int, intermediate_size: int) -> float:
         """
         Estimates FLOPs for a transformer decoder layer (Self-Attention + MLP).
         For 1 token in forward pass:
@@ -42,20 +45,25 @@ class ModelProfiler:
             return attn_flops + mlp_flops
 
         # Fallback parameter-based estimate (2 FLOPs per parameter per token)
-        param_count = sum(p.numel() for p in module.parameters())
-        return float(2 * param_count)
+        if module is not None:
+            param_count = sum(p.numel() for p in module.parameters())
+            return float(2 * param_count)
+        return 0.0
 
     @classmethod
     def profile_transformer_layers(
         cls,
-        layers: List[nn.Module],
+        layers: List[Optional[nn.Module]],
         hidden_size: int = 2048,
         intermediate_size: int = 5632,
         batch_size: int = 1,
         seq_len: int = 1,
-        dtype_bytes: int = 2,  # float16 / bfloat16 = 2 bytes
+        dtype_bytes: Union[int, float] = 2,  # float16 / bfloat16 = 2 bytes, int4 = 0.5 bytes
+        num_heads: int = 16,
+        num_kv_heads: Optional[int] = None,
     ) -> List[LayerProfile]:
         profiles = []
+        effective_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
         for idx, layer in enumerate(layers):
             flops = cls.estimate_layer_flops(layer, hidden_size, intermediate_size)
             if layer is not None:
@@ -67,7 +75,7 @@ class ModelProfiler:
 
             # Output activation tensor shape: [batch_size, seq_len, hidden_size]
             output_shape = [batch_size, seq_len, hidden_size]
-            output_bytes = batch_size * seq_len * hidden_size * dtype_bytes
+            output_bytes = int(batch_size * seq_len * hidden_size * dtype_bytes)
 
             profiles.append(
                 LayerProfile(
@@ -78,6 +86,9 @@ class ModelProfiler:
                     flops_per_token=flops,
                     output_shape=output_shape,
                     output_tensor_bytes=output_bytes,
+                    num_heads=num_heads,
+                    num_kv_heads=effective_kv_heads,
+                    dtype_bytes=float(dtype_bytes),
                 )
             )
         return profiles

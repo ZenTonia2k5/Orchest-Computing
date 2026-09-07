@@ -203,21 +203,28 @@ class OrchestBenchmarkSuite:
         """
         nodes = nodes or self.create_mock_cluster()
         model_configs = {
-            "Qwen2.5-0.5B": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864},
-            "Qwen2.5-1.5B": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960},
-            "Qwen2.5-3B": {"num_layers": 36, "hidden_size": 2048, "intermediate_size": 11008},
-            "Qwen2.5-7B": {"num_layers": 28, "hidden_size": 3584, "intermediate_size": 18944},
+            "Qwen2.5-0.5B": {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864, "num_heads": 14, "num_kv_heads": 2},
+            "Qwen2.5-1.5B": {"num_layers": 28, "hidden_size": 1536, "intermediate_size": 8960, "num_heads": 12, "num_kv_heads": 2},
+            "Qwen2.5-3B": {"num_layers": 36, "hidden_size": 2048, "intermediate_size": 11008, "num_heads": 16, "num_kv_heads": 2},
+            "Qwen2.5-7B": {"num_layers": 28, "hidden_size": 3584, "intermediate_size": 18944, "num_heads": 28, "num_kv_heads": 4},
+            "Qwen2.5-14B": {"num_layers": 48, "hidden_size": 5120, "intermediate_size": 13824, "num_heads": 40, "num_kv_heads": 8},
+            "Qwen2.5-20B": {"num_layers": 40, "hidden_size": 4096, "intermediate_size": 22016, "num_heads": 32, "num_kv_heads": 8},
         }
 
-        selected_models = model_names or list(model_configs.keys())
+        selected_models = model_names or ["Qwen2.5-0.5B", "Qwen2.5-1.5B", "Qwen2.5-3B", "Qwen2.5-7B"]
         results = {}
 
         for model_name in selected_models:
             cfg = model_configs.get(model_name, model_configs["Qwen2.5-0.5B"])
+            # Models >= 14B require INT4 (0.5 bytes/param) to fit within 3-node edge cluster (18.9GB total)
+            dtype_bytes = 0.5 if ("14B" in model_name or "20B" in model_name) else 2.0
             layers = ModelProfiler.profile_transformer_layers(
                 layers=[None] * cfg["num_layers"],
                 hidden_size=cfg["hidden_size"],
                 intermediate_size=cfg["intermediate_size"],
+                num_heads=cfg.get("num_heads", 16),
+                num_kv_heads=cfg.get("num_kv_heads", None),
+                dtype_bytes=dtype_bytes,
             )
 
             # 1. Measured Oracle (Exhaustive Search)
@@ -420,30 +427,49 @@ class OrchestBenchmarkSuite:
             })
         return results
 
+    def run_safety_ceiling_study(
+        self,
+        alphas: Optional[List[float]] = None,
+        nodes: Optional[List[NodeMetrics]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Sub-Study: Safety-Ceiling Sensitivity Analysis (RQ8).
+        Varies alpha in {0.80, 0.85, 0.90, 0.95} to assess OOM incidence, usable capacity, and partition quality.
+        """
+        nodes = nodes or self.create_mock_cluster()
+        alphas = alphas or [0.80, 0.85, 0.90, 0.95]
+        layers = ModelProfiler.profile_transformer_layers(
+            layers=[None] * 36, hidden_size=2048, intermediate_size=11008, num_heads=16, num_kv_heads=2
+        )
+        return self.partitioner.sweep_alpha_sensitivity(layers=layers, nodes=nodes, alphas=alphas, prompt_len=512)
+
     def run_all(self) -> Dict[str, Any]:
         """
-        Runs the complete 5-study benchmark suite.
+        Runs the complete benchmark suite including the 5 primary sub-studies and RQ8 alpha sensitivity.
         """
         print("\n" + "=" * 70)
         print("  🚀 EXECUTING ORCHEST COMPUTING REVISED BENCHMARK SUITE")
         print("=" * 70)
 
-        print("\n[1/5] Running Core Matrix Study (DP vs Baselines vs Oracle & Regret)...")
+        print("\n[1/6] Running Core Matrix Study (DP vs Baselines vs Oracle & Regret)...")
         core_res = self.run_core_matrix_study()
 
-        print("[2/5] Running Network Impact Study (RTT & Bandwidth Sensitivity)...")
+        print("[2/6] Running Network Impact Study (RTT & Bandwidth Sensitivity)...")
         net_res = self.run_network_impact_study()
 
-        print("[3/5] Running Concurrency & KV-Cache Study...")
+        print("[3/6] Running Concurrency & KV-Cache Study...")
         kv_res = self.run_concurrency_kv_study()
 
-        print("[4/5] Running Security Ablation Study (mTLS + CRC32 vs Raw)...")
+        print("[4/6] Running Security Ablation Study (mTLS + CRC32 vs Raw)...")
         sec_res = self.run_security_ablation_study()
 
-        print("[5/5] Running Thermal & Edge Resource Study...")
+        print("[5/6] Running Thermal & Edge Resource Study...")
         therm_res = self.run_thermal_resource_study()
 
-        print("\n[SUCCESS] All 5 benchmark sub-studies completed successfully!\n")
+        print("[6/6] Running Safety-Ceiling Sensitivity Study (alpha in [0.80..0.95])...")
+        alpha_res = self.run_safety_ceiling_study()
+
+        print("\n[SUCCESS] All benchmark studies completed successfully!\n")
 
         return {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -452,12 +478,13 @@ class OrchestBenchmarkSuite:
             "sub_study_3_concurrency_kv": kv_res,
             "sub_study_4_security_ablation": sec_res,
             "sub_study_5_thermal_resource": therm_res,
+            "rq8_safety_ceiling_sensitivity": alpha_res,
         }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Orchest Computing Benchmark Suite")
-    parser.add_argument("--study", choices=["all", "core", "network", "kv", "security", "thermal"], default="all")
+    parser.add_argument("--study", choices=["all", "core", "network", "kv", "security", "thermal", "alpha"], default="all")
     parser.add_argument("--out", type=str, default="benchmark_results.json")
     args = parser.parse_args()
 
@@ -475,6 +502,8 @@ def main():
         results = suite.run_security_ablation_study()
     elif args.study == "thermal":
         results = suite.run_thermal_resource_study()
+    elif args.study == "alpha":
+        results = suite.run_safety_ceiling_study()
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)

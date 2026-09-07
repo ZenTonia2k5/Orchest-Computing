@@ -134,3 +134,45 @@ def test_heuristic_baselines_and_oracle_regret():
     comp_assigns = partitioner.partition_compute_aware(layers=layers, nodes=nodes, prompt_len=256)
     comp_regret = partitioner.evaluate_partition_regret(comp_assigns, oracle_assigns)
     assert comp_regret["realized_regret_ms"] >= 0.0
+
+
+def test_gqa_aware_kv_cache():
+    """
+    Verifies GQA-aware KV Cache estimation (Proposal Section 4.4):
+    M_KV using num_kv_heads=4 (Qwen2.5-7B style) should be significantly lower
+    than naive MHA using num_heads=28.
+    """
+    mha_kv_mb = PartitionCostCalculator.estimate_kv_cache_mb(
+        num_layers=28, hidden_size=3584, num_heads=28, num_kv_heads=28, max_seq_len=2048, batch_size=1
+    )
+    gqa_kv_mb = PartitionCostCalculator.estimate_kv_cache_mb(
+        num_layers=28, hidden_size=3584, num_heads=28, num_kv_heads=4, max_seq_len=2048, batch_size=1
+    )
+    # GQA with 4 KV heads vs 28 heads should be exactly 1/7 the KV memory
+    assert gqa_kv_mb > 0.0
+    assert mha_kv_mb > gqa_kv_mb
+    ratio = mha_kv_mb / gqa_kv_mb
+    assert abs(ratio - 7.0) < 0.01
+
+
+def test_alpha_safety_ceiling_sensitivity():
+    """
+    Verifies Sweep over Memory Safety Ceiling alpha in {0.80, 0.85, 0.90, 0.95} (Proposal RQ8).
+    """
+    nodes = create_test_heterogeneous_cluster()
+    layers = ModelProfiler.profile_transformer_layers(
+        layers=[None] * 16, hidden_size=1024, intermediate_size=4096, num_heads=16, num_kv_heads=2
+    )
+    partitioner = DynamicPartitioner()
+
+    res = partitioner.sweep_alpha_sensitivity(
+        layers=layers, nodes=nodes, alphas=[0.80, 0.85, 0.90, 0.95], prompt_len=256
+    )
+
+    assert 0.80 in res
+    assert 0.85 in res
+    assert 0.90 in res
+    assert 0.95 in res
+    assert res[0.90]["feasible"] is True
+    assert res[0.90]["stages"] > 0
+    assert res[0.90]["total_latency_ms"] > 0.0

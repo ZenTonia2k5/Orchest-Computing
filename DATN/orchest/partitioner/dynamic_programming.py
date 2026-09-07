@@ -60,18 +60,21 @@ class DynamicPartitioner:
         concurrency: int = 1,
         runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
+        alpha: float = 0.90,
     ) -> List[SliceAssignment]:
         """
         Runs stage-based O(K * N^2) Dynamic Programming solver.
         Guarantees contiguous, non-fragmented layer assignments across K pipeline nodes
-        under strict Model Working Set memory constraints.
+        under strict Model Working Set memory constraints (governed by safety ceiling alpha).
+        Sweeps over admissible stage counts kappa <= K and selects P* = argmin_{1 <= kappa <= K} DP[kappa][L].
         """
         if ratios is not None and len(ratios) > 0:
             return self.partition_by_ratio(
                 layers, nodes, ratios, rtt_matrix, bw_matrix,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb, phase=phase
+                runtime_reserve_mb=runtime_reserve_mb, phase=phase,
+                alpha=alpha
             )
 
         N = len(layers)
@@ -94,7 +97,8 @@ class DynamicPartitioner:
                 layers, 0, i, node_0,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
-                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                alpha=alpha
             )
             if c_time != float("inf"):
                 dp[0][i] = c_time
@@ -116,7 +120,8 @@ class DynamicPartitioner:
                         layers, k, i, node_s,
                         phase=phase, prompt_len=prompt_len,
                         max_seq_len=max_seq_len, batch_size=batch_size,
-                        concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                        concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                        alpha=alpha
                     )
                     if c_time == float("inf"):
                         continue
@@ -131,18 +136,17 @@ class DynamicPartitioner:
                         dp[s][i] = total_cost
                         parent[s][i] = k - 1
 
-        # Find best stage count (prefer using all K nodes if feasible, or minimal cost s)
+        # Proposal Section 4.8 Equation (126): P* = argmin_{1 <= kappa <= K} DP[kappa][L]
         best_stage = -1
         min_total_cost = float("inf")
-        for s in range(K - 1, -1, -1):
-            if dp[s][N - 1] < float("inf"):
-                best_stage = s
+        for s in range(K):
+            if dp[s][N - 1] < min_total_cost:
                 min_total_cost = dp[s][N - 1]
-                break
+                best_stage = s
 
         if best_stage == -1:
             raise RuntimeError(
-                f"Dynamic Slicing impossible: Total model memory requirements exceed available cluster VRAM/RAM across all {K} nodes."
+                f"Dynamic Slicing impossible: Total model memory requirements exceed available cluster VRAM/RAM across all {K} nodes (alpha={alpha})."
             )
 
         # Reconstruct optimal partition trace
@@ -215,6 +219,7 @@ class DynamicPartitioner:
         concurrency: int = 1,
         runtime_reserve_mb: float = 500.0,
         phase: str = "prefill",
+        alpha: float = 0.90,
     ) -> List[SliceAssignment]:
         """
         Partitions layers according to custom proportional ratios while strictly verifying memory feasibility.
@@ -266,7 +271,8 @@ class DynamicPartitioner:
                 layers, start_l, end_l, n,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
-                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                alpha=alpha,
             )
 
             comm_time = 0.0
@@ -348,6 +354,7 @@ class DynamicPartitioner:
         concurrency: int = 1,
         runtime_reserve_mb: float = 500.0,
         phase: str = "prefill",
+        alpha: float = 0.90,
     ) -> Tuple[List[SliceAssignment], float]:
         """
         Measured Oracle: Performs exhaustive search across ALL possible contiguous cut points
@@ -379,7 +386,8 @@ class DynamicPartitioner:
                     layers, start_l, end_l, nodes[s],
                     phase=phase, prompt_len=prompt_len,
                     max_seq_len=max_seq_len, batch_size=batch_size,
-                    concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                    concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                    alpha=alpha,
                 )
                 if c_time == float("inf"):
                     feasible = False
@@ -401,7 +409,7 @@ class DynamicPartitioner:
                 best_cuts = full_cuts
 
         if best_cuts is None:
-            raise RuntimeError("No feasible partition found during Oracle search.")
+            raise RuntimeError(f"No feasible partition found during Oracle search (alpha={alpha}).")
 
         # Construct assignments for best cuts
         assignments = []
@@ -416,7 +424,8 @@ class DynamicPartitioner:
                 layers, start_l, end_l, n,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
-                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                alpha=alpha,
             )
             comm_time = 0.0
             if len(assignments) > 0 and start_l > 0:
@@ -447,6 +456,41 @@ class DynamicPartitioner:
             )
 
         return assignments, round(best_cost, 2)
+
+    def sweep_alpha_sensitivity(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        alphas: Optional[List[float]] = None,
+        **kwargs
+    ) -> Dict[float, Dict[str, Any]]:
+        """
+        Performs Safety-Ceiling Sensitivity Analysis across alpha in {0.80, 0.85, 0.90, 0.95} (Proposal RQ8).
+        Assesses impact of memory safety margin on feasibility, stage count, and predicted latency.
+        """
+        alphas = alphas or [0.80, 0.85, 0.90, 0.95]
+        results = {}
+        for a in alphas:
+            try:
+                assigns = self.partition(layers=layers, nodes=nodes, alpha=a, **kwargs)
+                tot_comp = sum(x.estimated_compute_ms for x in assigns)
+                tot_comm = sum(x.estimated_comm_ms for x in assigns)
+                tot_ws = sum(x.working_set_mb for x in assigns)
+                results[a] = {
+                    "feasible": True,
+                    "stages": len(assigns),
+                    "total_latency_ms": round(tot_comp + tot_comm, 2),
+                    "compute_ms": round(tot_comp, 2),
+                    "comm_ms": round(tot_comm, 2),
+                    "total_working_set_mb": round(tot_ws, 2),
+                    "assignments": [x.to_dict() for x in assigns],
+                }
+            except Exception as e:
+                results[a] = {
+                    "feasible": False,
+                    "error": str(e),
+                }
+        return results
 
     @staticmethod
     def evaluate_partition_regret(
