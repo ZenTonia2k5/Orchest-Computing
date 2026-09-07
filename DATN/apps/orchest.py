@@ -1,5 +1,10 @@
 import os
 import sys
+
+# Suppress macOS MallocStackLogging notices
+os.environ.pop("MallocStackLogging", None)
+os.environ.pop("MallocStackLoggingNoCompact", None)
+
 import time
 import webbrowser
 import threading

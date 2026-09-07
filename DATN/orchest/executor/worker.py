@@ -257,21 +257,16 @@ class WorkerNode:
                 device = "mps"
 
             try:
-                full_model = AutoModelForCausalLM.from_pretrained(
-                    model_name,
-                    torch_dtype=torch.float16 if device != "cpu" else torch.float32,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                )
-                self.slice_module = AutoModelSlicer.create_slice(
-                    model=full_model,
+                self.slice_module = AutoModelSlicer.load_selective_slice(
+                    model_name=model_name,
                     start_idx=start_idx,
                     end_idx=end_idx,
                     total_layers=total_layers,
                     device=device,
+                    dtype=torch.float16 if device != "cpu" else torch.float32,
                 )
                 self.status = "READY"
-                logger.info(f"Model Slice [{start_idx}..{end_idx}] loaded successfully on {device}.")
+                logger.info(f"Model Slice [{start_idx}..{end_idx}] loaded successfully on {device} via selective sharding.")
             except Exception as e:
                 logger.warning(f"Background model slice load notice: {e}")
                 self.status = "READY"

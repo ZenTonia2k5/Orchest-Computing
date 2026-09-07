@@ -1,5 +1,10 @@
 import os
 import sys
+
+# Suppress macOS MallocStackLogging notices
+os.environ.pop("MallocStackLogging", None)
+os.environ.pop("MallocStackLoggingNoCompact", None)
+
 import json
 import time
 import socket
@@ -139,8 +144,9 @@ def startup_event():
             remaining = max(0, int(SWARM_ENGINE_STATE["auto_benchmark_interval_sec"] - elapsed))
             SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = remaining
 
-            # If inference is NOT started (in STANDBY mode), auto re-run benchmark every 5 minutes (300s)
-            if not SWARM_ENGINE_STATE["enabled"] and elapsed >= SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]:
+            # If inference is NOT running (in STANDBY mode and worker not serving), auto re-run benchmark every 5 minutes (300s)
+            inference_active = SWARM_ENGINE_STATE["enabled"] or (local_worker.status == "SERVING")
+            if not inference_active and elapsed >= SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]:
                 try:
                     print("⏱️ [Auto-Benchmark] Inference Engine in Standby: running periodic hardware rating...")
                     run_client_hardware_rating(duration=2.0, cooldown=0.5)
@@ -231,12 +237,7 @@ def delete_node(req: NodeDeleteRequest):
     ok = host_orchestrator.delete_node(req.node_id)
     if host_orchestrator.active_model_name:
         cfg_m = MODEL_CONFIGS.get(host_orchestrator.active_model_name, {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
-        host_orchestrator.plan_model_slicing(
-            model_name=host_orchestrator.active_model_name,
-            num_layers=cfg_m["num_layers"],
-            hidden_size=cfg_m["hidden_size"],
-            intermediate_size=cfg_m["intermediate_size"],
-        )
+    ok = host_orchestrator.delete_node(node_id=req.node_id)
     return {"status": "SUCCESS" if ok else "NOT_FOUND", "node_id": req.node_id}
 
 
@@ -245,10 +246,10 @@ def ping_node(req: NodePingRequest):
     start = time.time()
     reachable = False
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.5)
-        s.connect((req.ip, req.port))
-        s.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.5)
+        sock.connect((req.ip, req.port))
+        sock.close()
         reachable = True
     except Exception:
         reachable = False
@@ -271,10 +272,14 @@ def get_worker_status():
     data = metrics.to_dict()
     data["tcp_port"] = local_worker.tcp_port
     data["worker_status"] = local_worker.status
+    data["is_connected"] = (local_worker.status != "OFFLINE")
     data["auto_accept"] = local_worker.auto_accept
     data["pending_requests"] = local_worker.pending_requests
     data["connection_history"] = local_worker.connection_history
     data["slice_info"] = local_worker.slice_info
+    data["engine_status"] = SWARM_ENGINE_STATE["status"]
+    data["engine_enabled"] = SWARM_ENGINE_STATE["enabled"]
+    data["next_benchmark_countdown_sec"] = SWARM_ENGINE_STATE.get("next_benchmark_countdown_sec", 300)
     return data
 
 

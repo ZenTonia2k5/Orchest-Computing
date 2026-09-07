@@ -1287,50 +1287,115 @@ document.addEventListener('DOMContentLoaded', () => {
     const notifDot = document.getElementById('worker-notif-dot');
     const btnClearLogs = document.getElementById('btn-clear-worker-logs');
 
-    workerPowerToggle.addEventListener('change', async (e) => {
-        const action = e.target.checked ? 'start' : 'stop';
-        await fetch('/api/worker/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action })
-        });
-        fetchWorkerMetrics();
-    });
+    const workerAlwaysConnectToggle = document.getElementById('toggle-worker-always-connect');
+    const btnWorkerConnectToggle = document.getElementById('btn-worker-connect-toggle');
+    const btnWorkerConnectText = document.getElementById('btn-worker-connect-text');
+    const btnWorkerConnectIcon = document.getElementById('btn-worker-connect-icon');
+    const workerConnectionStatusPill = document.getElementById('worker-connection-status-pill');
+    const workerConnectionLiveBanner = document.getElementById('worker-connection-live-banner');
+    const workerBenchStatusNote = document.getElementById('worker-bench-status-note');
 
-    autoAcceptToggle.addEventListener('change', async (e) => {
-        await fetch('/api/worker/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'start', auto_accept: e.target.checked })
+    // Initialize auto-connect setting from localStorage (default false)
+    const isAutoConnectSaved = localStorage.getItem('worker_always_autoconnect') === 'true';
+    if (workerAlwaysConnectToggle) {
+        workerAlwaysConnectToggle.checked = isAutoConnectSaved;
+        workerAlwaysConnectToggle.addEventListener('change', (e) => {
+            localStorage.setItem('worker_always_autoconnect', e.target.checked);
         });
-    });
+    }
 
-    btnAcceptInv.addEventListener('click', async () => {
-        if (pendingWorkerReqs.length === 0) return;
-        const req = pendingWorkerReqs[0];
-        await fetch('/api/worker/respond_request', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ request_id: req.id, action: 'accept' })
+    if (btnWorkerConnectToggle) {
+        btnWorkerConnectToggle.addEventListener('click', async () => {
+            const isCurrentlyOnline = workerPowerToggle && workerPowerToggle.checked;
+            const action = isCurrentlyOnline ? 'stop' : 'start';
+            btnWorkerConnectToggle.disabled = true;
+            try {
+                const res = await fetch('/api/worker/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action })
+                });
+                const data = await res.json();
+                if (action === 'start') {
+                    showToast({
+                        type: 'success',
+                        icon: '🔗',
+                        title: 'Connected to Swarm Cluster',
+                        message: 'Worker Node is now broadcasting UDP beacons and listening on TCP port 5555.',
+                        duration: 5000
+                    });
+                } else {
+                    showToast({
+                        type: 'info',
+                        icon: '⚪',
+                        title: 'Disconnected from Swarm',
+                        message: 'Worker Node entered standalone mode.',
+                        duration: 4000
+                    });
+                }
+            } catch (e) {
+                console.error(e);
+            } finally {
+                btnWorkerConnectToggle.disabled = false;
+                fetchWorkerMetrics();
+            }
         });
-        fetchWorkerMetrics();
-    });
+    }
 
-    btnRejectInv.addEventListener('click', async () => {
-        if (pendingWorkerReqs.length === 0) return;
-        const req = pendingWorkerReqs[0];
-        await fetch('/api/worker/respond_request', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ request_id: req.id, action: 'reject' })
+    if (workerPowerToggle) {
+        workerPowerToggle.addEventListener('change', async (e) => {
+            const action = e.target.checked ? 'start' : 'stop';
+            await fetch('/api/worker/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            fetchWorkerMetrics();
         });
-        fetchWorkerMetrics();
-    });
+    }
 
-    btnClearLogs.addEventListener('click', async () => {
-        await fetch('/api/worker/clear_history', { method: 'POST' });
-        fetchWorkerMetrics();
-    });
+    if (autoAcceptToggle) {
+        autoAcceptToggle.addEventListener('change', async (e) => {
+            await fetch('/api/worker/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'start', auto_accept: e.target.checked })
+            });
+        });
+    }
+
+    if (btnAcceptInv) {
+        btnAcceptInv.addEventListener('click', async () => {
+            if (pendingWorkerReqs.length === 0) return;
+            const req = pendingWorkerReqs[0];
+            await fetch('/api/worker/respond_request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_id: req.id, action: 'accept' })
+            });
+            fetchWorkerMetrics();
+        });
+    }
+
+    if (btnRejectInv) {
+        btnRejectInv.addEventListener('click', async () => {
+            if (pendingWorkerReqs.length === 0) return;
+            const req = pendingWorkerReqs[0];
+            await fetch('/api/worker/respond_request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_id: req.id, action: 'reject' })
+            });
+            fetchWorkerMetrics();
+        });
+    }
+
+    if (btnClearLogs) {
+        btnClearLogs.addEventListener('click', async () => {
+            await fetch('/api/worker/clear_history', { method: 'POST' });
+            fetchWorkerMetrics();
+        });
+    }
 
     async function fetchWorkerMetrics() {
         try {
@@ -1343,13 +1408,61 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('worker-device').innerText = (data.gpus && data.gpus.length > 0) ? data.gpus[0].name : 'CPU Native';
 
             const isRunning = data.worker_status !== 'OFFLINE';
-            workerPowerToggle.checked = isRunning;
-            autoAcceptToggle.checked = !!data.auto_accept;
+            if (workerPowerToggle) workerPowerToggle.checked = isRunning;
+            if (autoAcceptToggle) autoAcceptToggle.checked = !!data.auto_accept;
 
             const badge = document.getElementById('worker-status-badge');
             if (badge) {
                 badge.innerText = isRunning ? `⚡ Worker Active (${data.worker_status})` : '⚪ Worker Offline';
                 badge.className = isRunning ? 'worker-badge online' : 'worker-badge offline';
+            }
+
+            if (btnWorkerConnectToggle) {
+                if (isRunning) {
+                    btnWorkerConnectToggle.className = 'btn btn-secondary';
+                    if (btnWorkerConnectIcon) btnWorkerConnectIcon.innerText = '⏹';
+                    if (btnWorkerConnectText) btnWorkerConnectText.innerText = 'Disconnect from Swarm';
+                } else {
+                    btnWorkerConnectToggle.className = 'btn btn-primary';
+                    if (btnWorkerConnectIcon) btnWorkerConnectIcon.innerText = '🔗';
+                    if (btnWorkerConnectText) btnWorkerConnectText.innerText = 'Connect to Swarm';
+                }
+            }
+
+            if (workerConnectionStatusPill) {
+                if (isRunning) {
+                    workerConnectionStatusPill.className = 'engine-mode-chip running';
+                    workerConnectionStatusPill.innerText = `Connected (${data.worker_status})`;
+                } else {
+                    workerConnectionStatusPill.className = 'engine-mode-chip standby';
+                    workerConnectionStatusPill.innerText = 'Disconnected';
+                }
+            }
+
+            if (workerConnectionLiveBanner) {
+                if (isRunning) {
+                    const sliceInfoText = data.slice_info 
+                        ? `• Serving Layers [${data.slice_info.layer_start}..${data.slice_info.layer_end}] of ${data.slice_info.model_name}` 
+                        : '• Ready for model slice allocation';
+                    workerConnectionLiveBanner.innerHTML = `🟢 <strong>Connected to Swarm Cluster</strong>: Local IP <code>${data.ip_address}:${data.tcp_port}</code> (UDP Beacon Active) ${sliceInfoText}`;
+                    workerConnectionLiveBanner.style.color = 'var(--accent-emerald)';
+                } else {
+                    workerConnectionLiveBanner.innerHTML = `⚪ <strong>Standalone Mode</strong> (Disconnected from LAN Swarm Cluster. Click "Connect to Swarm" to join).`;
+                    workerConnectionLiveBanner.style.color = 'var(--text-muted)';
+                }
+            }
+
+            if (workerBenchStatusNote) {
+                const engineRunning = data.engine_enabled || data.engine_status === 'RUNNING' || data.worker_status === 'SERVING';
+                if (engineRunning) {
+                    workerBenchStatusNote.innerHTML = `🟢 <strong>Swarm Inference Active</strong>: Hardware rating is <em>paused</em> to prioritize compute.`;
+                    workerBenchStatusNote.style.color = 'var(--accent-emerald)';
+                } else {
+                    const remainingSec = data.next_benchmark_countdown_sec !== undefined ? data.next_benchmark_countdown_sec : 300;
+                    const formattedTime = formatTimeRemaining(remainingSec);
+                    workerBenchStatusNote.innerHTML = `⏱️ Auto-Benchmark <strong>ACTIVE</strong>: re-running hardware rating every 5 mins (Next run in <span style="color: #fbbf24; font-weight: 700;">${formattedTime}</span>)`;
+                    workerBenchStatusNote.style.color = 'var(--accent-cyan)';
+                }
             }
 
             const memFree = (data.gpus && data.gpus.length > 0) ? data.gpus[0].vram_free_mb : data.ram_available_mb;

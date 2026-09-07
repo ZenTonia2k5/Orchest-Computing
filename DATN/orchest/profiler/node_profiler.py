@@ -3,6 +3,7 @@ import platform
 import socket
 import subprocess
 import time
+import functools
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Any
 
@@ -16,6 +17,7 @@ except ImportError:
     HAS_NVML = False
 
 
+@functools.lru_cache(maxsize=1)
 def get_accurate_cpu_model() -> str:
     system = platform.system()
     if system == "Darwin":

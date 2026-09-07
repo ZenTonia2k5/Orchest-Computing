@@ -22,11 +22,18 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 # Default durations for quick interactive rating vs deep stress test
 DEFAULT_QUICK_DURATION = 3.0
+import functools
+import shutil
+
 DEFAULT_COOLDOWN_DURATION = 1.0
 
+_HAS_OSX_CPU_TEMP = shutil.which("osx-cpu-temp") is not None
+_HAS_NVIDIA_SMI = shutil.which("nvidia-smi") is not None
 
+
+@functools.lru_cache(maxsize=1)
 def show_hardware_info() -> Dict[str, Any]:
-    """Quét và hiển thị chi tiết thông tin phần cứng của máy đang chạy"""
+    """Quét và hiển thị chi tiết thông tin phần cứng của máy đang chạy (cached)"""
     os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
     cpu_name = platform.processor() or "Unknown CPU"
 
@@ -78,16 +85,16 @@ def show_hardware_info() -> Dict[str, Any]:
     }
 
 
-
 def get_current_temperature() -> float:
-    """Lấy nhiệt độ thời gian thực đa nền tảng"""
+    """Lấy nhiệt độ thời gian thực đa nền tảng (tránh gọi fork subprocess nếu không có công cụ)"""
     system = platform.system()
     if system == "Darwin":
-        try:
-            output = subprocess.check_output(["osx-cpu-temp"], stderr=subprocess.DEVNULL).decode().strip()
-            return float(output.replace("°C", "").strip())
-        except Exception:
-            pass
+        if _HAS_OSX_CPU_TEMP:
+            try:
+                output = subprocess.check_output(["osx-cpu-temp"], stderr=subprocess.DEVNULL).decode().strip()
+                return float(output.replace("°C", "").strip())
+            except Exception:
+                pass
     elif system == "Linux":
         try:
             import psutil
@@ -106,14 +113,15 @@ def get_current_temperature() -> float:
         except Exception:
             pass
 
-        try:
-            output = subprocess.check_output(
-                ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-                stderr=subprocess.DEVNULL
-            ).decode().strip()
-            return float(output)
-        except Exception:
-            pass
+        if _HAS_NVIDIA_SMI:
+            try:
+                output = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+                    stderr=subprocess.DEVNULL
+                ).decode().strip()
+                return float(output)
+            except Exception:
+                pass
 
     return 45.0
 
