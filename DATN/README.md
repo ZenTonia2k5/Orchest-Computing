@@ -1,5 +1,7 @@
 # Orchest Computing: Orchestrator MLOps Phi Tập Trung Cho Thiết Bị Biên Đa Chủng Loại
 
+> 📖 **Tài liệu Kỹ thuật Chi tiết**: Toàn bộ cấu trúc hệ thống, logic toán học, phương án kỹ thuật và quy trình thực nghiệm được ghi chép đầy đủ tại: [PROJECT_ARCHITECTURE_AND_TECHNICAL_DESIGN.md](file:///Applications/HCMUT/Orchest%20Computing/PROJECT_ARCHITECTURE_AND_TECHNICAL_DESIGN.md).
+
 **Orchest Computing** là nền tảng MLOps phân tán dạng Universal App, hỗ trợ kết nối các máy tính không đồng nhất (Windows, macOS, Linux) trong mạng nội bộ (LAN) thành một cụm suy luận phân tán (Swarm Inference).
 
 ## 🚀 Tính năng chính
