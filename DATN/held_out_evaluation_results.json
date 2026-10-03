@@ -1,0 +1,80 @@
+{
+  "device": "cuda:0",
+  "device_type": "cuda",
+  "timestamp": "2026-10-03 09:43:54",
+  "dataset_role": "held_out_evaluation",
+  "is_held_out": true,
+  "do_not_calibrate": true,
+  "models": {
+    "Qwen2.5-0.5B": [
+      {
+        "model_name": "Qwen2.5-0.5B",
+        "prompt_len": 1024,
+        "batch_size": 1,
+        "num_layers": 1,
+        "device_type": "cuda",
+        "dtype": "float16",
+        "t_compute_pre_ms": 2.403,
+        "compute_gflops_per_sec": 13878.62,
+        "effective_tflops": 13.879,
+        "peak_vram_mb": 78.82,
+        "reserved_vram_mb": 104.0,
+        "ram_used_mb": 15778.86,
+        "temp_start_c": 57.0,
+        "temp_end_c": 57.0,
+        "temp_delta_c": 0.0,
+        "throttling_risk": false,
+        "t_d2h_ms": 0.446,
+        "t_h2d_ms": 0.298,
+        "t_sync_ms": 0.009,
+        "t_encode_ms": 0.935,
+        "t_decode_ms": 0.932,
+        "t_comm_staging_total_ms": 2.619,
+        "activation_tensor_shape": [
+          1,
+          1024,
+          896
+        ],
+        "activation_size_bytes": 1835008,
+        "activation_size_mb": 1.75,
+        "simulated_lan_network_ms": 15.18,
+        "total_prefill_stage_latency_ms": 20.203
+      }
+    ],
+    "Qwen2.5-1.5B": [
+      {
+        "model_name": "Qwen2.5-1.5B",
+        "prompt_len": 1024,
+        "batch_size": 1,
+        "num_layers": 1,
+        "device_type": "cuda",
+        "dtype": "float16",
+        "t_compute_pre_ms": 5.492,
+        "compute_gflops_per_sec": 18914.92,
+        "effective_tflops": 18.915,
+        "peak_vram_mb": 174.26,
+        "reserved_vram_mb": 202.0,
+        "ram_used_mb": 15832.41,
+        "temp_start_c": 58.0,
+        "temp_end_c": 57.0,
+        "temp_delta_c": 0.0,
+        "throttling_risk": false,
+        "t_d2h_ms": 0.58,
+        "t_h2d_ms": 0.467,
+        "t_sync_ms": 0.008,
+        "t_encode_ms": 1.611,
+        "t_decode_ms": 1.587,
+        "t_comm_staging_total_ms": 4.254,
+        "activation_tensor_shape": [
+          1,
+          1024,
+          1536
+        ],
+        "activation_size_bytes": 3145728,
+        "activation_size_mb": 3.0,
+        "simulated_lan_network_ms": 25.666,
+        "total_prefill_stage_latency_ms": 35.412
+      }
+    ]
+  }
+}

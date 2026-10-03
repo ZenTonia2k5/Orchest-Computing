@@ -514,4 +514,124 @@ class DynamicPartitioner:
             "relative_regret_pct": round(rel_regret_pct, 2),
         }
 
+    def identify_weak_nodes(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        prompt_len: int = 1,
+        concurrency: int = 1,
+        alpha: float = 0.90,
+        weak_compute_ratio_threshold: float = 0.15,
+        min_compute_tflops_threshold: float = 0.5,
+    ) -> Dict[str, Any]:
+        """
+        Diagnoses each node in the cluster against the given model workload to identify:
+        1. Inadmissible memory nodes: cannot hold even 1 layer under alpha safety ceiling.
+        2. Severe compute bottleneck / weak nodes: compute capacity is less than threshold ratio of cluster max.
+        3. Thermally throttled nodes: temperature >= 82C or throttling risk.
+        Returns detailed diagnostics and lists of admissible vs weak nodes.
+        """
+        if not layers or not nodes:
+            return {"admissible_nodes": [], "weak_nodes": [], "diagnostics": {}}
+
+        # Minimum memory needed for exactly 1 layer
+        single_layer_ws_mb = self.cost_calc.calculate_working_set_mb(
+            layers=layers,
+            start_idx=0,
+            end_idx=0,
+            prompt_len=prompt_len,
+            concurrency=concurrency,
+        )
+
+        speeds = [self.cost_calc.get_node_compute_speed(n) for n in nodes]
+        max_speed = max(speeds) if speeds else 1.0
+
+        diagnostics = {}
+        admissible = []
+        weak = []
+
+        for n in nodes:
+            nid = n.node_id
+            avail_mem = self.cost_calc.get_node_available_memory_mb(n)
+            speed = self.cost_calc.get_node_compute_speed(n)
+            gpu_temp = n.gpus[0].temperature_c if n.gpus else None
+
+            issues = []
+            # 1. Memory check
+            if single_layer_ws_mb > (avail_mem * alpha):
+                issues.append(
+                    f"INADMISSIBLE_MEMORY: Needs {single_layer_ws_mb:.1f}MB, has {avail_mem * alpha:.1f}MB usable"
+                )
+
+            # 2. Compute bottleneck check
+            if speed < min_compute_tflops_threshold or (max_speed > 0 and (speed / max_speed) < weak_compute_ratio_threshold):
+                issues.append(
+                    f"WEAK_COMPUTE: Speed {speed:.2f} TFLOPs is < {weak_compute_ratio_threshold * 100:.0f}% of cluster peak ({max_speed:.2f} TFLOPs)"
+                )
+
+            # 3. Thermal throttling check
+            if gpu_temp is not None and gpu_temp >= 82.0:
+                issues.append(f"THERMAL_THROTTLED: GPU temperature {gpu_temp:.1f}C >= 82C")
+
+            is_weak = len(issues) > 0
+            diagnostics[nid] = {
+                "node_id": nid,
+                "hostname": n.hostname,
+                "is_weak": is_weak,
+                "issues": issues,
+                "available_mem_mb": round(avail_mem, 1),
+                "compute_tflops": round(speed, 2),
+                "temperature_c": gpu_temp,
+            }
+
+            if is_weak:
+                weak.append(n)
+            else:
+                admissible.append(n)
+
+        return {
+            "admissible_nodes": admissible,
+            "weak_nodes": weak,
+            "single_layer_working_set_mb": round(single_layer_ws_mb, 2),
+            "diagnostics": diagnostics,
+        }
+
+    def partition_safe_fleet(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        exclude_weak_nodes: bool = True,
+        prompt_len: int = 1,
+        concurrency: int = 1,
+        alpha: float = 0.90,
+        **kwargs
+    ) -> Tuple[List[SliceAssignment], Dict[str, Any]]:
+        """
+        Safely partitions model layers across the cluster.
+        If exclude_weak_nodes is True, automatically detects and filters out incapable/bottleneck nodes
+        before running the Dynamic Programming solver.
+        """
+        analysis = self.identify_weak_nodes(
+            layers=layers,
+            nodes=nodes,
+            prompt_len=prompt_len,
+            concurrency=concurrency,
+            alpha=alpha,
+        )
+
+        candidate_nodes = analysis["admissible_nodes"] if (exclude_weak_nodes and analysis["admissible_nodes"]) else nodes
+
+        if not candidate_nodes:
+            raise RuntimeError("Safe Fleet Partitioning failed: No admissible nodes found with sufficient VRAM/compute.")
+
+        assignments = self.partition(
+            layers=layers,
+            nodes=candidate_nodes,
+            prompt_len=prompt_len,
+            concurrency=concurrency,
+            alpha=alpha,
+            **kwargs
+        )
+        return assignments, analysis
+
 

@@ -247,7 +247,7 @@ class NodeProfiler:
         batt_pct = battery.percent if battery else None
         plugged = battery.power_plugged if battery else None
 
-        return NodeMetrics(
+        metrics = NodeMetrics(
             node_id=self.node_id,
             hostname=socket.gethostname(),
             ip_address=self.get_ip_address(),
@@ -269,3 +269,17 @@ class NodeProfiler:
             status="READY",
             download_pct=100.0,
         )
+
+        # Auto-calibrate with empirical hardware profile if present
+        if os.path.exists("hardware_profile.json") and metrics.gpus:
+            try:
+                import json
+                with open("hardware_profile.json", "r", encoding="utf-8") as f:
+                    p_data = json.load(f)
+                calib_tflops = float(p_data.get("calibrated_effective_tflops", 0.0))
+                if calib_tflops > 0:
+                    metrics.gpus[0].estimated_tflops = calib_tflops
+            except Exception:
+                pass
+
+        return metrics

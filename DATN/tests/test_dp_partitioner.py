@@ -83,3 +83,44 @@ def test_ratio_partitioning():
     assert slice_plan_75_25[1].layers_count == 6
     assert sum(s.layers_count for s in slice_plan_75_25) == 24
 
+
+def test_identify_weak_nodes_and_safe_partitioning():
+    layers = ModelProfiler.profile_transformer_layers([None] * 16, hidden_size=2048, intermediate_size=5632)
+
+    # Strong Node 1: Fast (16 TFLOPs), 8GB VRAM
+    node_strong = create_dummy_node("node_strong", "192.168.1.10", vram_free_mb=8000, tflops=16.0)
+
+    # Weak Node 2 (Inadmissible Memory): Tiny VRAM (only 5MB free, cannot hold 1 layer of ~70MB)
+    node_tiny_mem = create_dummy_node("node_tiny_mem", "192.168.1.11", vram_free_mb=5, tflops=10.0)
+
+    # Weak Node 3 (Severe Compute Bottleneck): 0.1 TFLOPs (CPU or very slow iGPU)
+    node_slow_compute = create_dummy_node("node_slow_compute", "192.168.1.12", vram_free_mb=8000, tflops=0.1)
+
+    # Weak Node 4 (Thermal Throttled): GPU temperature 88°C
+    node_throttled = create_dummy_node("node_throttled", "192.168.1.13", vram_free_mb=8000, tflops=12.0)
+    node_throttled.gpus[0].temperature_c = 88.0
+
+    cluster = [node_strong, node_tiny_mem, node_slow_compute, node_throttled]
+    partitioner = DynamicPartitioner()
+
+    # Run weak node diagnosis
+    diag = partitioner.identify_weak_nodes(layers=layers, nodes=cluster, alpha=0.90)
+
+    assert len(diag["admissible_nodes"]) == 1
+    assert diag["admissible_nodes"][0].node_id == "node_strong"
+    assert len(diag["weak_nodes"]) == 3
+
+    # Check specific diagnoses
+    assert "INADMISSIBLE_MEMORY" in diag["diagnostics"]["node_tiny_mem"]["issues"][0]
+    assert "WEAK_COMPUTE" in diag["diagnostics"]["node_slow_compute"]["issues"][0]
+    assert "THERMAL_THROTTLED" in diag["diagnostics"]["node_throttled"]["issues"][0]
+
+    # Verify partition_safe_fleet automatically excludes weak nodes and successfully plans on node_strong
+    safe_plan, safe_diag = partitioner.partition_safe_fleet(
+        layers=layers, nodes=cluster, exclude_weak_nodes=True
+    )
+    assert len(safe_plan) == 1
+    assert safe_plan[0].node.node_id == "node_strong"
+    assert safe_plan[0].layers_count == 16
+
+

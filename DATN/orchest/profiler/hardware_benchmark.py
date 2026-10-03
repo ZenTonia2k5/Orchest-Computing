@@ -6,7 +6,7 @@ import multiprocessing
 import numpy as np
 import sys
 import threading
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 # Reconfigure stdout and stderr to use UTF-8 to avoid UnicodeEncodeError on Windows
 if hasattr(sys.stdout, 'reconfigure'):
@@ -164,8 +164,48 @@ def cpu_heavy_inference_worker(stop_ev: threading.Event):
             break
 
 
-def run_cpu_test(duration: float) -> Tuple[float, float, float]:
+def compute_statistical_summary(samples: List[float]) -> Dict[str, float]:
+    """Computes median, mean, std, min, max, p95, and Bootstrap 95% confidence intervals."""
+    if not samples:
+        return {"median": 0.0, "mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "p95": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+    arr = np.array(samples, dtype=float)
+    median_val = float(np.median(arr))
+    mean_val = float(np.mean(arr))
+    std_val = float(np.std(arr)) if len(arr) > 1 else 0.0
+    min_val = float(np.min(arr))
+    max_val = float(np.max(arr))
+    p95_val = float(np.percentile(arr, 95.0))
+
+    if len(arr) < 3:
+        ci_lower = min_val
+        ci_upper = max_val
+    else:
+        # Bootstrap 95% CI
+        boot_medians = []
+        for _ in range(500):
+            sample = np.random.choice(arr, size=len(arr), replace=True)
+            boot_medians.append(float(np.median(sample)))
+        ci_lower = float(np.percentile(boot_medians, 2.5))
+        ci_upper = float(np.percentile(boot_medians, 97.5))
+
+    return {
+        "median": round(median_val, 2),
+        "mean": round(mean_val, 2),
+        "std": round(std_val, 2),
+        "min": round(min_val, 2),
+        "max": round(max_val, 2),
+        "p95": round(p95_val, 2),
+        "ci_lower": round(ci_lower, 2),
+        "ci_upper": round(ci_upper, 2),
+    }
+
+
+def run_cpu_test(duration: float, warmup_passes: int = 1) -> Tuple[float, float, float]:
     device = torch.device("cpu")
+    # Warm-up passes (discarded to avoid cold-start noise)
+    for _ in range(max(1, warmup_passes)):
+        _ = simulate_llm_inference_layer_torch(device, d_model=512, seq_len=128)
+
     temp_start = get_current_temperature()
     total_flops_accumulated = 0.0
     start_time = time.perf_counter()
@@ -180,13 +220,25 @@ def run_cpu_test(duration: float) -> Tuple[float, float, float]:
     return gflops_per_sec, temp_start, temp_end
 
 
-def run_gpu_test(duration: float) -> Tuple[float, float, float]:
+def run_gpu_test(duration: float, warmup_passes: int = 2) -> Tuple[float, float, float, Dict[str, float]]:
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
         device = torch.device("cuda")
     else:
-        return 0.0, get_current_temperature(), get_current_temperature()
+        return 0.0, get_current_temperature(), get_current_temperature(), {"peak_vram_mb": 0.0, "reserved_vram_mb": 0.0}
+
+    # Reset peak memory statistics if on CUDA
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+    # Warm-up passes (discarded to avoid cold start / kernel compilation latency)
+    for _ in range(max(1, warmup_passes)):
+        _ = simulate_llm_inference_layer_torch(device, d_model=2048, seq_len=256)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device.type == "mps":
+            torch.mps.synchronize()
 
     temp_start = get_current_temperature()
     total_flops_accumulated = 0.0
@@ -199,16 +251,20 @@ def run_gpu_test(duration: float) -> Tuple[float, float, float]:
     actual_duration = max(time.perf_counter() - start_time, 1e-5)
     temp_end = get_current_temperature()
     gflops_per_sec = total_flops_accumulated / actual_duration
-    return gflops_per_sec, temp_start, temp_end
+
+    mem_stats = {"peak_vram_mb": 0.0, "reserved_vram_mb": 0.0}
+    if device.type == "cuda":
+        mem_stats["peak_vram_mb"] = round(torch.cuda.max_memory_allocated(device) / (1024 * 1024), 2)
+        mem_stats["reserved_vram_mb"] = round(torch.cuda.max_memory_reserved(device) / (1024 * 1024), 2)
+
+    return gflops_per_sec, temp_start, temp_end, mem_stats
 
 
-def run_npu_test(duration: float) -> Tuple[float, float, float]:
+def run_npu_test(duration: float, warmup_passes: int = 1) -> Tuple[float, float, float]:
     if torch.backends.mps.is_available() or torch.cuda.is_available():
         device = torch.device("mps" if torch.backends.mps.is_available() else "cuda")
     else:
         return 0.0, get_current_temperature(), get_current_temperature()
-
-    temp_start = get_current_temperature()
 
     class StaticTransformerLayer(torch.nn.Module):
         def __init__(self):
@@ -226,13 +282,15 @@ def run_npu_test(duration: float) -> Tuple[float, float, float]:
     model = StaticTransformerLayer().to(device)
     static_input = torch.randn(1, 512, 2048, device=device, dtype=torch.float16)
 
-    try:
-        compiled_model = torch.compile(model)
-        _ = compiled_model(static_input)
-        model = compiled_model
-    except Exception:
-        pass
+    # Warm-up passes
+    for _ in range(max(1, warmup_passes)):
+        _ = model(static_input)
+        if device.type == "mps":
+            torch.mps.synchronize()
+        elif device.type == "cuda":
+            torch.cuda.synchronize(device)
 
+    temp_start = get_current_temperature()
     flops_per_loop = (2 * 2048 * (3 * 2048) + 4 * 512 * 2048 + 2 * 2048 * 2048) * 512 / 1e9
     loop_count = 0
     start_time = time.perf_counter()
@@ -241,7 +299,7 @@ def run_npu_test(duration: float) -> Tuple[float, float, float]:
         if device.type == "mps":
             torch.mps.synchronize()
         elif device.type == "cuda":
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(device)
         loop_count += 1
 
     actual_duration = max(time.perf_counter() - start_time, 1e-5)
@@ -428,10 +486,127 @@ LATEST_BENCHMARK: Dict[str, Any] = {
 BENCHMARK_LOCK = threading.Lock()
 
 
-def run_client_hardware_rating(duration: float = DEFAULT_QUICK_DURATION, cooldown: float = DEFAULT_COOLDOWN_DURATION) -> Dict[str, Any]:
+def run_thermal_throttling_stress_test(
+    duration_sec: float = 30.0,
+    window_sec: float = 5.0,
+    device_type: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Runs the complete benchmark suite, rates client hardware performance,
-    and returns a structured performance report. Thread-safe.
+    Executes a sustained high-intensity stress test over time (e.g. 30s-120s)
+    to detect thermal throttling and measure performance degradation curves.
+    """
+    if device_type:
+        device = torch.device(device_type)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
+    dtype = torch.float16 if device.type != "cpu" else torch.float32
+    d_model = 4096
+    seq_len = 512
+    batch_size = 1
+
+    flops_per_layer = (2 * d_model * (3 * d_model) + 4 * seq_len * d_model + 2 * d_model * d_model) * batch_size * seq_len
+    flops_per_loop_b = flops_per_layer / 1e9
+
+    qkv_proj = torch.randn(d_model, d_model * 3, device=device, dtype=dtype)
+    out_proj = torch.randn(d_model, d_model, device=device, dtype=dtype)
+    hidden_states = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
+
+    def _sync():
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device.type == "mps":
+            torch.mps.synchronize()
+
+    # Warm-up pass
+    for _ in range(2):
+        qkv = torch.matmul(hidden_states, qkv_proj)
+        q, k, v = torch.chunk(qkv, 3, dim=-1)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (d_model ** 0.5)
+        attn = torch.softmax(scores, dim=-1)
+        _ = torch.matmul(torch.matmul(attn, v), out_proj)
+        _sync()
+
+    degradation_curve = []
+    overall_start = time.perf_counter()
+    window_idx = 0
+    t_start_temp = get_current_temperature()
+
+    while (time.perf_counter() - overall_start) < duration_sec:
+        window_start = time.perf_counter()
+        window_flops = 0.0
+        window_loops = 0
+
+        while (time.perf_counter() - window_start) < window_sec:
+            qkv = torch.matmul(hidden_states, qkv_proj)
+            q, k, v = torch.chunk(qkv, 3, dim=-1)
+            scores = torch.matmul(q, k.transpose(-2, -1)) / (d_model ** 0.5)
+            attn = torch.softmax(scores, dim=-1)
+            _ = torch.matmul(torch.matmul(attn, v), out_proj)
+            _sync()
+            window_flops += flops_per_loop_b
+            window_loops += 1
+
+        w_duration = max(time.perf_counter() - window_start, 1e-5)
+        curr_gflops = window_flops / w_duration
+        curr_temp = get_current_temperature()
+        elapsed_total = round(time.perf_counter() - overall_start, 2)
+
+        degradation_curve.append({
+            "window": window_idx,
+            "elapsed_sec": elapsed_total,
+            "gflops_per_sec": round(curr_gflops, 2),
+            "temperature_c": round(curr_temp, 1),
+            "loops": window_loops,
+        })
+        window_idx += 1
+
+    t_end_temp = get_current_temperature()
+
+    if degradation_curve:
+        initial_gflops = degradation_curve[0]["gflops_per_sec"]
+        peak_gflops = max(w["gflops_per_sec"] for w in degradation_curve)
+        final_gflops = degradation_curve[-1]["gflops_per_sec"]
+        min_gflops = min(w["gflops_per_sec"] for w in degradation_curve)
+        peak_temp = max(w["temperature_c"] for w in degradation_curve)
+    else:
+        initial_gflops = peak_gflops = final_gflops = min_gflops = 0.0
+        peak_temp = t_end_temp
+
+    retention_pct = round((final_gflops / max(peak_gflops, 1e-5)) * 100.0, 2)
+    throttling_detected = (retention_pct < 85.0) or (peak_temp >= 82.0)
+    degradation_pct = round(max(0.0, 100.0 - retention_pct), 2)
+
+    return {
+        "status": "COMPLETED",
+        "duration_sec": round(duration_sec, 2),
+        "device": str(device),
+        "temp_start_c": round(t_start_temp, 1),
+        "temp_end_c": round(t_end_temp, 1),
+        "temp_peak_c": round(peak_temp, 1),
+        "initial_gflops": initial_gflops,
+        "peak_gflops": peak_gflops,
+        "final_gflops": final_gflops,
+        "performance_retention_pct": retention_pct,
+        "thermal_degradation_pct": degradation_pct,
+        "throttling_detected": throttling_detected,
+        "degradation_curve": degradation_curve,
+    }
+
+
+def run_client_hardware_rating(
+    duration: float = DEFAULT_QUICK_DURATION,
+    cooldown: float = DEFAULT_COOLDOWN_DURATION,
+    n_repeats: int = 1,
+    auto_save_profile: bool = True,
+) -> Dict[str, Any]:
+    """
+    Runs the complete benchmark suite with warm-up passes and multi-repeat statistical dispersion,
+    rates client hardware performance, and automatically updates the hardware profile cache.
     """
     global LATEST_BENCHMARK
 
@@ -441,31 +616,54 @@ def run_client_hardware_rating(duration: float = DEFAULT_QUICK_DURATION, cooldow
         LATEST_BENCHMARK["hardware_info"] = hw_info
 
         try:
-            # 1. CPU
-            cpu_speed, cpu_ts, cpu_te = run_cpu_test(duration)
-            if cooldown > 0:
-                time.sleep(cooldown)
+            cpu_samples = []
+            gpu_samples = []
+            npu_samples = []
+            all_samples = []
+            vram_stats = {"peak_vram_mb": 0.0, "reserved_vram_mb": 0.0}
 
-            # 2. GPU
-            gpu_speed, gpu_ts, gpu_te = run_gpu_test(duration)
-            if cooldown > 0:
-                time.sleep(cooldown)
+            temp_start = get_current_temperature()
 
-            # 3. NPU Graph
-            npu_speed, npu_ts, npu_te = run_npu_test(duration)
-            if cooldown > 0:
-                time.sleep(cooldown)
+            for rep in range(max(1, n_repeats)):
+                # 1. CPU
+                c_speed, _, _ = run_cpu_test(duration, warmup_passes=1 if rep == 0 else 0)
+                cpu_samples.append(c_speed)
+                if cooldown > 0:
+                    time.sleep(cooldown)
 
-            # 4. All Hardware
-            all_speed, all_ts, all_te = run_all_hardware_test(duration)
+                # 2. GPU
+                g_speed, _, _, mem = run_gpu_test(duration, warmup_passes=2 if rep == 0 else 0)
+                gpu_samples.append(g_speed)
+                vram_stats = mem
+                if cooldown > 0:
+                    time.sleep(cooldown)
 
-            effective_peak_gflops = max(all_speed, gpu_speed, npu_speed, cpu_speed)
+                # 3. NPU Graph
+                n_speed, _, _ = run_npu_test(duration, warmup_passes=1 if rep == 0 else 0)
+                npu_samples.append(n_speed)
+                if cooldown > 0:
+                    time.sleep(cooldown)
+
+                # 4. All Hardware
+                a_speed, _, _ = run_all_hardware_test(duration)
+                all_samples.append(a_speed)
+                if rep < n_repeats - 1 and cooldown > 0:
+                    time.sleep(cooldown)
+
+            temp_end = get_current_temperature()
+            temp_delta = max(temp_end - temp_start, 0.0)
+
+            # Calculate statistical dispersion (median, mean, std, CI)
+            cpu_stats = compute_statistical_summary(cpu_samples)
+            gpu_stats = compute_statistical_summary(gpu_samples)
+            npu_stats = compute_statistical_summary(npu_samples)
+            all_stats = compute_statistical_summary(all_samples)
+
+            effective_peak_gflops = max(
+                all_stats["median"], gpu_stats["median"], npu_stats["median"], cpu_stats["median"]
+            )
             tier_name, tier_color = calculate_performance_tier(effective_peak_gflops)
             tflops = effective_peak_gflops / 1000.0
-
-            temp_start = cpu_ts
-            temp_end = all_te
-            temp_delta = max(temp_end - temp_start, 0.0)
 
             breakdown_metrics = calculate_prefill_decode_breakdown(tflops=tflops)
 
@@ -473,12 +671,20 @@ def run_client_hardware_rating(duration: float = DEFAULT_QUICK_DURATION, cooldow
                 "status": "READY",
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "hardware_info": hw_info,
+                "n_repeats": n_repeats,
                 "scores": {
-                    "cpu_gflops": round(cpu_speed, 2),
-                    "gpu_gflops": round(gpu_speed, 2),
-                    "npu_gflops": round(npu_speed, 2),
-                    "all_gflops": round(all_speed, 2),
+                    "cpu_gflops": cpu_stats["median"],
+                    "gpu_gflops": gpu_stats["median"],
+                    "npu_gflops": npu_stats["median"],
+                    "all_gflops": all_stats["median"],
                 },
+                "statistics": {
+                    "cpu": cpu_stats,
+                    "gpu": gpu_stats,
+                    "npu": npu_stats,
+                    "all": all_stats,
+                },
+                "memory_mb": vram_stats,
                 "temperatures": {
                     "start_c": round(temp_start, 1),
                     "end_c": round(temp_end, 1),
@@ -491,6 +697,29 @@ def run_client_hardware_rating(duration: float = DEFAULT_QUICK_DURATION, cooldow
             }
 
             LATEST_BENCHMARK.update(result)
+
+            # Auto-save profile so Cost Model and DP can immediately use calibrated TFLOPs
+            if auto_save_profile:
+                try:
+                    import os, json
+                    p_file = "hardware_profile.json"
+                    existing_p = {}
+                    if os.path.exists(p_file):
+                        try:
+                            with open(p_file, "r", encoding="utf-8") as f:
+                                existing_p = json.load(f)
+                        except Exception:
+                            pass
+                    existing_p["calibrated_effective_tflops"] = round(tflops, 2)
+                    existing_p["device_type"] = hw_info.get("device_type", "cpu")
+                    existing_p["timestamp"] = result["timestamp"]
+                    existing_p["benchmark_scores"] = result["scores"]
+                    existing_p["benchmark_statistics"] = result["statistics"]
+                    with open(p_file, "w", encoding="utf-8") as f:
+                        json.dump(existing_p, f, indent=2)
+                except Exception:
+                    pass
+
             return result
         except Exception as e:
             LATEST_BENCHMARK["status"] = "ERROR"
@@ -501,15 +730,15 @@ def run_client_hardware_rating(duration: float = DEFAULT_QUICK_DURATION, cooldow
 
 if __name__ == "__main__":
     print("Executing standalone AI Hardware Inference Benchmark...")
-    res = run_client_hardware_rating(duration=5.0, cooldown=1.0)
+    res = run_client_hardware_rating(duration=2.0, cooldown=0.5, n_repeats=3)
     print("\n" + "=" * 60)
-    print("  🏆 KẾT QUẢ ĐÁNH GIÁ HIỆU NĂNG AI CLIENT")
+    print("  🏆 KẾT QUẢ ĐÁNH GIÁ HIỆU NĂNG AI CLIENT (MULTI-REPEAT)")
     print("=" * 60)
     print(f"• Xếp hạng (Rating Tier): {res['tier_name']}")
-    print(f"• Tốc độ CPU Inference  : {res['scores']['cpu_gflops']:,.2f} GFLOPs/s")
-    print(f"• Tốc độ GPU Inference  : {res['scores']['gpu_gflops']:,.2f} GFLOPs/s")
-    print(f"• Tốc độ NPU Graph      : {res['scores']['npu_gflops']:,.2f} GFLOPs/s")
+    print(f"• Tốc độ CPU (Median)   : {res['scores']['cpu_gflops']:,.2f} GFLOPs/s (std: {res['statistics']['cpu']['std']})")
+    print(f"• Tốc độ GPU (Median)   : {res['scores']['gpu_gflops']:,.2f} GFLOPs/s (std: {res['statistics']['gpu']['std']})")
     print(f"• Tốc độ Toàn Hệ Thống  : {res['scores']['all_gflops']:,.2f} GFLOPs/s")
     print(f"• Ước tính Sức mạnh AI  : {res['estimated_tflops']:.2f} TFLOPs")
-    print(f"• Biến thiên nhiệt độ   : {res['temperatures']['start_c']}°C ➔ {res['temperatures']['end_c']}°C (+{res['temperatures']['delta_c']}°C)")
+    print(f"• Biến thiên nhiệt độ   : {res['temperatures']['start_c']}°C ➔ {res['temperatures']['end_c']}°C")
     print("=" * 60 + "\n")
+

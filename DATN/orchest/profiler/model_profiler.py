@@ -17,6 +17,7 @@ class LayerProfile:
     num_heads: int = 16
     num_kv_heads: Optional[int] = None
     dtype_bytes: float = 2.0
+    intermediate_size: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -89,6 +90,7 @@ class ModelProfiler:
                     num_heads=num_heads,
                     num_kv_heads=effective_kv_heads,
                     dtype_bytes=float(dtype_bytes),
+                    intermediate_size=intermediate_size,
                 )
             )
         return profiles
