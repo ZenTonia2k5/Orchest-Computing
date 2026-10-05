@@ -5,14 +5,11 @@ import socket
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec
 
 def generate_key_and_cert(subject_name, issuer_key=None, issuer_cert=None, is_ca=False):
-    # Generate private key
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
+    # Generate ECDSA private key (SECP256R1 / prime256v1)
+    private_key = ec.generate_private_key(ec.SECP256R1())
     
     # Subject name setup
     subject = x509.Name([
@@ -35,8 +32,9 @@ def generate_key_and_cert(subject_name, issuer_key=None, issuer_cert=None, is_ca
     builder = builder.issuer_name(issuer)
     builder = builder.public_key(private_key.public_key())
     builder = builder.serial_number(x509.random_serial_number())
-    builder = builder.not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1))
-    builder = builder.not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    builder = builder.not_valid_before(now - datetime.timedelta(days=1))
+    builder = builder.not_valid_after(now + datetime.timedelta(days=365))
     
     # SAN extension for server certs to prevent name mismatch errors
     if not is_ca:
