@@ -281,8 +281,27 @@ class HostOrchestrator:
         )
 
         ratios = custom_ratios if (partition_mode == "ratio" and custom_ratios) else None
+
+        # Build dynamic link matrices from observed network ping and bandwidth
+        rtt_matrix = {}
+        bw_matrix = {}
+        for src in cluster_nodes:
+            for dst in cluster_nodes:
+                if src.node_id != dst.node_id:
+                    link_rtt = getattr(dst, "last_rtt_ms", 1.0)
+                    link_bw = getattr(dst, "last_bw_mbps", 1000.0)
+                    rtt_matrix[(src.node_id, dst.node_id)] = link_rtt
+                    bw_matrix[(src.node_id, dst.node_id)] = link_bw
+
         logger.info(f"Running Partitioning (mode={partition_mode}, alpha={alpha}, ratios={ratios}) across {len(cluster_nodes)} enabled nodes...")
-        slice_plan = self.partitioner.partition(layers=layers, nodes=cluster_nodes, ratios=ratios, alpha=alpha)
+        slice_plan = self.partitioner.partition(
+            layers=layers,
+            nodes=cluster_nodes,
+            rtt_matrix=rtt_matrix,
+            bw_matrix=bw_matrix,
+            ratios=ratios,
+            alpha=alpha,
+        )
         self.current_slice_plan = slice_plan
         self.active_model_name = model_name
 

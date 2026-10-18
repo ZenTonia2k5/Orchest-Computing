@@ -643,6 +643,7 @@ class PartitionCostCalculator:
         batch_size: int = 1,
         calibrated_speed_factor: Optional[float] = None,
         num_heads: Optional[int] = None,
+        cached_linear_flops: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Calculates execution time in milliseconds for the Prefill phase of layers [start_idx : end_idx] on a node.
@@ -666,7 +667,10 @@ class PartitionCostCalculator:
         b = max(batch_size, 1)
 
         # 1. Linear Projection FLOPs (FeedForward SwiGLU + Attention QKV/Output projections)
-        linear_flops = sum(l.flops_per_token for l in sub_layers) * s * b
+        if cached_linear_flops is not None:
+            linear_flops = cached_linear_flops * s * b
+        else:
+            linear_flops = sum(l.flops_per_token for l in sub_layers) * s * b
 
         # 2. Quadratic Attention FLOPs (QK^T and Softmax*V attention score computation)
         layer_heads = num_heads or getattr(sub_layers[0], "num_heads", 16)
@@ -1156,6 +1160,7 @@ class PartitionCostCalculator:
         device_type: str = "cuda",
         backend_workspace_mb: Optional[float] = None,
         include_backend_workspace: bool = True,
+        cached_weights_mb: Optional[float] = None,
     ) -> float:
         """
         Calculates total Model Working Set for layers [start_idx : end_idx]:
@@ -1167,7 +1172,7 @@ class PartitionCostCalculator:
             return 0.0
 
         num_sub_layers = len(sub_layers)
-        m_weights = sum(l.weight_memory_mb for l in sub_layers)
+        m_weights = cached_weights_mb if cached_weights_mb is not None else sum(l.weight_memory_mb for l in sub_layers)
 
         hidden_sz = sub_layers[0].output_shape[2] if (sub_layers and len(sub_layers[0].output_shape) > 2) else 2048
         seq_len = max_seq_len if max_seq_len is not None else min(prompt_len + 128, 2048)
@@ -1222,6 +1227,8 @@ class PartitionCostCalculator:
         alpha: float = 0.90,
         num_heads: Optional[int] = None,
         num_kv_heads: Optional[int] = None,
+        cached_weights_mb: Optional[float] = None,
+        cached_linear_flops: Optional[float] = None,
     ) -> float:
         """
         Calculates execution time in milliseconds to compute layers[start_idx : end_idx] on a given node.
@@ -1251,6 +1258,7 @@ class PartitionCostCalculator:
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
             device_type=node_dev,
+            cached_weights_mb=cached_weights_mb,
         )
 
         # Hard memory constraint check: M_stage <= alpha * M_usable
@@ -1273,15 +1281,19 @@ class PartitionCostCalculator:
                 prompt_len=prompt_len,
                 batch_size=batch_size,
                 num_heads=num_heads,
+                cached_linear_flops=cached_linear_flops,
             )
             return prefill_info["compute_ms"]
         else:
             # Decode phase: Memory-bandwidth bound + 1 token FLOPs
             mem_bw_gbs = 50.0 if node.gpus else 25.0
-            weight_mb = sum(l.weight_memory_mb for l in sub_layers)
+            weight_mb = cached_weights_mb if cached_weights_mb is not None else sum(l.weight_memory_mb for l in sub_layers)
             mem_read_sec = (weight_mb / 1024.0) / mem_bw_gbs
 
-            total_flops_per_token = sum(l.flops_per_token for l in sub_layers)
+            if cached_linear_flops is not None:
+                total_flops_per_token = cached_linear_flops
+            else:
+                total_flops_per_token = sum(l.flops_per_token for l in sub_layers)
             tflops_speed = cls.get_node_compute_speed(node)
             effective_flops = total_flops_per_token * max(batch_size, 1)
             compute_sec = mem_read_sec + ((effective_flops / 1e12) / tflops_speed)

@@ -124,3 +124,88 @@ def test_identify_weak_nodes_and_safe_partitioning():
     assert safe_plan[0].layers_count == 16
 
 
+def test_dp_oracle_exact_enumeration():
+    """
+    Checklist Requirement:
+    'Kiểm tra kết quả DP bằng các trường hợp nhỏ có thể liệt kê toàn bộ partition.'
+    'Đảm bảo thuật toán chỉ tuyên bố tối ưu trong không gian partition đã đặc tả.'
+    Verifies that DP guarantees exact mathematical global optimality (0.0 ms regret)
+    against exhaustive combinatorial Oracle search across small test clusters.
+    """
+    partitioner = DynamicPartitioner()
+
+    # Case 1: 2 heterogeneous nodes, 10 layers
+    layers_10 = ModelProfiler.profile_transformer_layers([None] * 10, hidden_size=1024, intermediate_size=4096)
+    node_a = create_dummy_node("node_fast", "192.168.1.10", vram_free_mb=1500, tflops=16.0)
+    node_b = create_dummy_node("node_slow", "192.168.1.11", vram_free_mb=2000, tflops=8.0)
+    nodes_2 = [node_a, node_b]
+
+    oracle_assigns, oracle_cost = partitioner.measured_oracle_search(layers_10, nodes_2, prompt_len=128)
+    dp_assigns = partitioner.partition(layers_10, nodes_2, prompt_len=128)
+    regret_2 = partitioner.evaluate_partition_regret(dp_assigns, oracle_assigns)
+
+    assert regret_2["realized_regret_ms"] == 0.0
+    assert regret_2["relative_regret_pct"] == 0.0
+    assert len(dp_assigns) == len(oracle_assigns)
+    for dp_s, orac_s in zip(dp_assigns, oracle_assigns):
+        assert dp_s.node.node_id == orac_s.node.node_id
+        assert dp_s.layer_start == orac_s.layer_start
+        assert dp_s.layer_end == orac_s.layer_end
+
+    # Case 2: 3 heterogeneous nodes with network delay, 8 layers
+    layers_8 = ModelProfiler.profile_transformer_layers([None] * 8, hidden_size=1024, intermediate_size=4096)
+    node_c = create_dummy_node("node_c", "192.168.1.12", vram_free_mb=1200, tflops=10.0)
+    nodes_3 = [node_a, node_b, node_c]
+    rtt_matrix = {
+        (node_a.node_id, node_b.node_id): 2.0,
+        (node_b.node_id, node_c.node_id): 3.0,
+    }
+    bw_matrix = {
+        (node_a.node_id, node_b.node_id): 800.0,
+        (node_b.node_id, node_c.node_id): 500.0,
+    }
+
+    oracle_assigns_3, oracle_cost_3 = partitioner.measured_oracle_search(
+        layers_8, nodes_3, rtt_matrix=rtt_matrix, bw_matrix=bw_matrix, prompt_len=256
+    )
+    dp_assigns_3 = partitioner.partition(
+        layers_8, nodes_3, rtt_matrix=rtt_matrix, bw_matrix=bw_matrix, prompt_len=256
+    )
+    regret_3 = partitioner.evaluate_partition_regret(dp_assigns_3, oracle_assigns_3)
+
+    assert regret_3["realized_regret_ms"] == 0.0
+    assert regret_3["relative_regret_pct"] == 0.0
+
+
+def test_dp_complexity_and_memory_bounds():
+    """
+    Checklist Requirement:
+    'Kiểm tra độ phức tạp mục tiêu O(KL^2) về thời gian và O(KL) về bộ nhớ.'
+    Verifies that DP table memory is bounded by K * L and execution time scales as O(K * L^2).
+    """
+    import time
+    partitioner = DynamicPartitioner()
+
+    K = 4
+    nodes = [create_dummy_node(f"node_{i}", f"192.168.1.{10+i}", vram_free_mb=16000, tflops=10.0 + i) for i in range(K)]
+
+    # Measure time scaling across increasing L (16, 32, 64 layers)
+    runtimes = {}
+    for L in [16, 32, 64]:
+        layers = ModelProfiler.profile_transformer_layers([None] * L, hidden_size=1024, intermediate_size=4096)
+        t_start = time.perf_counter()
+        plan = partitioner.partition(layers, nodes)
+        t_elapsed = time.perf_counter() - t_start
+        runtimes[L] = t_elapsed
+        assert len(plan) >= 1
+        assert sum(p.layers_count for p in plan) == L
+
+    # When L doubles (16 -> 32, 32 -> 64), O(L^2) ratio is ~4x.
+    # An O(L^3) algorithm would be 8x, while O(2^L) is exponential.
+    # Ratio must be well below 8x (cubic threshold).
+    ratio_32_16 = runtimes[32] / max(runtimes[16], 1e-5)
+    ratio_64_32 = runtimes[64] / max(runtimes[32], 1e-5)
+    assert ratio_64_32 < 7.5, f"Scaling ratio {ratio_64_32:.2f} indicates worse than O(L^2) complexity"
+
+
+

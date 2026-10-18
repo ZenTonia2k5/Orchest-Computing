@@ -258,6 +258,9 @@ def ping_node(req: NodePingRequest):
         reachable = False
 
     rtt_ms = round((time.time() - start) * 1000, 2)
+    if host_orchestrator and req.node_id in host_orchestrator.worker_nodes:
+        setattr(host_orchestrator.worker_nodes[req.node_id], "last_rtt_ms", rtt_ms if reachable else 999.0)
+
     return {
         "node_id": req.node_id,
         "reachable": reachable,

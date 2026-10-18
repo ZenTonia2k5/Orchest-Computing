@@ -39,9 +39,19 @@ class PartitionEvaluationResult:
 class DynamicPartitioner:
     """
     Dynamic Programming Graph Partitioning Algorithm for Model Dynamic Slicing.
-    Finds the globally optimal partition of N transformer layers across K heterogeneous nodes
-    to minimize end-to-end latency while strictly satisfying Model Working Set memory constraints.
-    Also provides standard heuristic baselines and exhaustive Measured Oracle search.
+
+    Optimality Specification:
+    Guarantees globally optimal partition strictly within the defined partition space:
+    1. 1D Contiguous Pipeline Partitioning: Ordered sequence of pipeline stages (node 0 -> node 1 -> ... -> node_{kappa-1}, kappa <= K).
+    2. Non-overlapping contiguous layer intervals: Each selected node s takes a contiguous sub-range [layer_start_s, layer_end_s].
+    3. Strict Model Working Set memory feasibility: M_stage(s) <= alpha * M_usable(s).
+    4. Minimization of total end-to-end pipeline latency (compute + communication).
+    Note: Does not search arbitrary DAGs, tensor-parallel splits, or non-contiguous layer permutations (NP-hard).
+
+    Complexity:
+    - Time Complexity: O(K * N^2) where K is the number of nodes and N is the number of layers.
+      Precomputed layer prefix sums ensure each interval query is O(1).
+    - Memory Complexity: O(K * N) for DP cost table and parent backtracking pointers.
     """
 
     def __init__(self, cost_calc: Optional[PartitionCostCalculator] = None):
@@ -67,6 +77,7 @@ class DynamicPartitioner:
         Guarantees contiguous, non-fragmented layer assignments across K pipeline nodes
         under strict Model Working Set memory constraints (governed by safety ceiling alpha).
         Sweeps over admissible stage counts kappa <= K and selects P* = argmin_{1 <= kappa <= K} DP[kappa][L].
+        Guarantees exact mathematical optimality strictly within the defined 1D contiguous pipeline partitioning space.
         """
         if ratios is not None and len(ratios) > 0:
             return self.partition_by_ratio(
@@ -85,6 +96,14 @@ class DynamicPartitioner:
         rtt_matrix = rtt_matrix or {}
         bw_matrix = bw_matrix or {}
 
+        # Precompute prefix sums for O(1) interval queries of weight and FLOPs
+        # Guarantees strict O(K * N^2) time complexity
+        pref_weights = [0.0] * (N + 1)
+        pref_flops = [0.0] * (N + 1)
+        for idx, lyr in enumerate(layers):
+            pref_weights[idx + 1] = pref_weights[idx] + lyr.weight_memory_mb
+            pref_flops[idx + 1] = pref_flops[idx] + lyr.flops_per_token
+
         # dp[s][i]: Min latency to execute layers 0..i across first (s+1) nodes (nodes 0..s)
         dp = [[float("inf")] * N for _ in range(K)]
         # parent[s][i]: previous layer cut point (k-1) where node s takes [k..i]
@@ -93,12 +112,16 @@ class DynamicPartitioner:
         # Base case: Stage 0 (Node 0) takes layers 0..i
         node_0 = nodes[0]
         for i in range(N):
+            w_cached = pref_weights[i + 1] - pref_weights[0]
+            f_cached = pref_flops[i + 1] - pref_flops[0]
             c_time = self.cost_calc.compute_time_ms(
                 layers, 0, i, node_0,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
                 concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
-                alpha=alpha
+                alpha=alpha,
+                cached_weights_mb=w_cached,
+                cached_linear_flops=f_cached,
             )
             if c_time != float("inf"):
                 dp[0][i] = c_time
@@ -116,12 +139,16 @@ class DynamicPartitioner:
                     if dp[s - 1][k - 1] == float("inf"):
                         continue
 
+                    w_cached = pref_weights[i + 1] - pref_weights[k]
+                    f_cached = pref_flops[i + 1] - pref_flops[k]
                     c_time = self.cost_calc.compute_time_ms(
                         layers, k, i, node_s,
                         phase=phase, prompt_len=prompt_len,
                         max_seq_len=max_seq_len, batch_size=batch_size,
                         concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
-                        alpha=alpha
+                        alpha=alpha,
+                        cached_weights_mb=w_cached,
+                        cached_linear_flops=f_cached,
                     )
                     if c_time == float("inf"):
                         continue
@@ -169,11 +196,16 @@ class DynamicPartitioner:
         assignments = []
         for idx, (start_l, end_l, node_idx) in enumerate(raw_assignments):
             n = nodes[node_idx]
+            w_cached = pref_weights[end_l + 1] - pref_weights[start_l]
+            f_cached = pref_flops[end_l + 1] - pref_flops[start_l]
             c_time = self.cost_calc.compute_time_ms(
                 layers, start_l, end_l, n,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
-                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb
+                concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                alpha=alpha,
+                cached_weights_mb=w_cached,
+                cached_linear_flops=f_cached,
             )
 
             comm_time = 0.0
@@ -189,7 +221,8 @@ class DynamicPartitioner:
                 layers, start_l, end_l,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb
+                runtime_reserve_mb=runtime_reserve_mb,
+                cached_weights_mb=w_cached,
             )
 
             assignments.append(
@@ -214,10 +247,10 @@ class DynamicPartitioner:
         rtt_matrix: Optional[Dict[Tuple[str, str], float]] = None,
         bw_matrix: Optional[Dict[Tuple[str, str], float]] = None,
         prompt_len: int = 1,
-        max_seq_len: int = 2048,
+        max_seq_len: Optional[int] = None,
         batch_size: int = 1,
         concurrency: int = 1,
-        runtime_reserve_mb: float = 500.0,
+        runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
         alpha: float = 0.90,
     ) -> List[SliceAssignment]:
@@ -349,10 +382,10 @@ class DynamicPartitioner:
         rtt_matrix: Optional[Dict[Tuple[str, str], float]] = None,
         bw_matrix: Optional[Dict[Tuple[str, str], float]] = None,
         prompt_len: int = 1,
-        max_seq_len: int = 2048,
+        max_seq_len: Optional[int] = None,
         batch_size: int = 1,
         concurrency: int = 1,
-        runtime_reserve_mb: float = 500.0,
+        runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
         alpha: float = 0.90,
     ) -> Tuple[List[SliceAssignment], float]:
@@ -364,6 +397,12 @@ class DynamicPartitioner:
         K = len(nodes)
         rtt_matrix = rtt_matrix or {}
         bw_matrix = bw_matrix or {}
+
+        pref_weights = [0.0] * (N + 1)
+        pref_flops = [0.0] * (N + 1)
+        for idx, lyr in enumerate(layers):
+            pref_weights[idx + 1] = pref_weights[idx] + lyr.weight_memory_mb
+            pref_flops[idx + 1] = pref_flops[idx] + lyr.flops_per_token
 
         best_cost = float("inf")
         best_cuts = None
@@ -382,12 +421,16 @@ class DynamicPartitioner:
                     # Bypassed node
                     continue
 
+                w_cached = pref_weights[end_l + 1] - pref_weights[start_l]
+                f_cached = pref_flops[end_l + 1] - pref_flops[start_l]
                 c_time = self.cost_calc.compute_time_ms(
                     layers, start_l, end_l, nodes[s],
                     phase=phase, prompt_len=prompt_len,
                     max_seq_len=max_seq_len, batch_size=batch_size,
                     concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
                     alpha=alpha,
+                    cached_weights_mb=w_cached,
+                    cached_linear_flops=f_cached,
                 )
                 if c_time == float("inf"):
                     feasible = False
@@ -420,12 +463,16 @@ class DynamicPartitioner:
                 continue
 
             n = nodes[s]
+            w_cached = pref_weights[end_l + 1] - pref_weights[start_l]
+            f_cached = pref_flops[end_l + 1] - pref_flops[start_l]
             c_time = self.cost_calc.compute_time_ms(
                 layers, start_l, end_l, n,
                 phase=phase, prompt_len=prompt_len,
                 max_seq_len=max_seq_len, batch_size=batch_size,
                 concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
                 alpha=alpha,
+                cached_weights_mb=w_cached,
+                cached_linear_flops=f_cached,
             )
             comm_time = 0.0
             if len(assignments) > 0 and start_l > 0:
@@ -440,7 +487,8 @@ class DynamicPartitioner:
                 layers, start_l, end_l,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb
+                runtime_reserve_mb=runtime_reserve_mb,
+                cached_weights_mb=w_cached,
             )
 
             assignments.append(
