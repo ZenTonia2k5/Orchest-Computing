@@ -206,7 +206,11 @@ def get_cluster_status():
         setattr(local_node, "tcp_port", 5555)
         setattr(local_node, "alias", "Host Master (Local)")
         setattr(local_node, "enabled", True)
-        nodes = [local_node]
+    try:
+        from orchest.profiler.profile_manager import sync_online_cluster_nodes
+        sync_online_cluster_nodes(nodes)
+    except Exception:
+        pass
 
     return {
         "node_count": len(nodes),
@@ -457,6 +461,11 @@ def toggle_engine(req: EngineToggleRequest):
 def on_app_shutdown():
     print("[Server] 🧹 Running shutdown cache cleanup...")
     cleanup_incomplete_downloads(remove_aborted_models=True)
+    try:
+        from orchest.profiler.profile_manager import sync_online_cluster_nodes
+        sync_online_cluster_nodes([])
+    except Exception:
+        pass
 
 
 @app.post("/api/cache/clean")

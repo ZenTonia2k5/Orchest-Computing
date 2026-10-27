@@ -8,6 +8,7 @@ across heterogeneous nodes (CUDA, Apple Silicon MPS, CPU) in a unified swarm.
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Orchest.Profiler.ProfileManager")
@@ -172,7 +173,12 @@ def save_device_profile(
                 target_local = os.path.join("DATN", LOCAL_PROFILE_NAME)
             with open(target_local, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
-            logger.info(f"Saved local machine profile to {target_local} ({dev.upper()}: {tflops} TFLOPS)")
+            try:
+                # Restrict permissions: read/write for owner only (0o600)
+                os.chmod(target_local, 0o600)
+            except Exception:
+                pass
+            logger.info(f"Saved secure local machine profile to {target_local} ({dev.upper()}: {tflops} TFLOPS)")
         except Exception as e:
             logger.warning(f"Failed to save local hardware profile: {e}")
 
@@ -205,3 +211,49 @@ def save_device_profile(
         logger.info(f"Updated multi-device catalog in {shared_path} for device '{dev}'.")
     except Exception as e:
         logger.debug(f"Could not update shared hardware profile catalog: {e}")
+
+
+def sync_online_cluster_nodes(
+    online_nodes: list,
+    shared_profile_path: Optional[str] = None,
+) -> None:
+    """
+    Dynamically synchronizes the hardware profile with ONLY the nodes that are currently online.
+    When users download the repository or when nodes disconnect, offline traces are not retained.
+    """
+    try:
+        shared_path = shared_profile_path or find_profile_path(SHARED_PROFILE_NAME) or SHARED_PROFILE_NAME
+        if not os.path.exists(shared_path):
+            return
+
+        with open(shared_path, "r", encoding="utf-8") as f:
+            shared_data = json.load(f)
+
+        formatted_online = []
+        for n in online_nodes:
+            gpu = n.gpus[0] if (hasattr(n, "gpus") and n.gpus) else None
+            dev_type = gpu.device_type if gpu else "cpu"
+            acc_name = gpu.name if gpu else getattr(n, "cpu_model", "CPU Native")
+            tflops = round(float(gpu.estimated_tflops if gpu else 0.1), 2)
+            vram_mb = round(float(gpu.vram_free_mb if gpu else getattr(n, "ram_available_mb", 0.0)), 2)
+
+            formatted_online.append({
+                "node_id": getattr(n, "node_id", "unknown_node"),
+                "alias": getattr(n, "alias", "Swarm Node"),
+                "device_type": dev_type,
+                "accelerator": acc_name,
+                "estimated_tflops": tflops,
+                "usable_memory_mb": vram_mb,
+                "status": "ONLINE",
+            })
+
+        shared_data["cluster_status"] = "ONLINE" if formatted_online else "IDLE"
+        shared_data["online_nodes_count"] = len(formatted_online)
+        shared_data["online_nodes"] = formatted_online
+        shared_data["last_cluster_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        with open(shared_path, "w", encoding="utf-8") as f:
+            json.dump(shared_data, f, indent=2)
+    except Exception as e:
+        logger.debug(f"Notice during online cluster sync: {e}")
+

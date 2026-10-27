@@ -4,6 +4,7 @@ import socket
 import subprocess
 import time
 import functools
+import hashlib
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Any
 
@@ -107,8 +108,18 @@ class NodeMetrics:
 
 
 class NodeProfiler:
-    def __init__(self, node_id: Optional[str] = None):
-        self.node_id = node_id or f"{socket.gethostname()}_{platform.system().lower()}"
+    def __init__(self, node_id: Optional[str] = None, privacy_mode: bool = True):
+        self.privacy_mode = privacy_mode
+        if node_id:
+            self.node_id = node_id
+        else:
+            raw_host = socket.gethostname()
+            if self.privacy_mode:
+                # Mask personal name from raw hostname to prevent leaking user identity on LAN broadcast
+                h_hash = hashlib.sha256(raw_host.encode("utf-8")).hexdigest()[:8]
+                self.node_id = f"node_{platform.system().lower()}_{h_hash}"
+            else:
+                self.node_id = f"{raw_host}_{platform.system().lower()}"
         self._init_nvml()
 
     def _init_nvml(self):
@@ -247,9 +258,12 @@ class NodeProfiler:
         batt_pct = battery.percent if battery else None
         plugged = battery.power_plugged if battery else None
 
+        raw_host = socket.gethostname()
+        safe_host = f"{platform.system().lower()}-node-{hashlib.sha256(raw_host.encode('utf-8')).hexdigest()[:6]}" if self.privacy_mode else raw_host
+
         metrics = NodeMetrics(
             node_id=self.node_id,
-            hostname=socket.gethostname(),
+            hostname=safe_host,
             ip_address=self.get_ip_address(),
             os_system=platform.system(),
             os_release=platform.release(),

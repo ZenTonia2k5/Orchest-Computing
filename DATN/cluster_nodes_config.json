@@ -1,9 +1,3 @@
 {
-  "nodes": {
-    "local_worker_edge": {
-      "alias": "MacBook M2 Max (Primary Edge)",
-      "updated_at": 1787026610.597931,
-      "enabled": false
-    }
-  }
+  "nodes": {}
 }

@@ -40,11 +40,6 @@ def main():
 
     # 2. Register automatic cleanup on program termination
     atexit.register(handle_exit_cleanup)
-    try:
-        signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
-        signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
-    except Exception:
-        pass
 
     # Automatically open web browser after 1.2 seconds
     def open_browser():
@@ -58,7 +53,12 @@ def main():
 
     # Start FastAPI Uvicorn Server
     from apps.dashboard.server import app
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        handle_exit_cleanup()
 
 
 if __name__ == "__main__":

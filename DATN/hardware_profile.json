@@ -1,7 +1,12 @@
 {
-  "device": "cuda:0",
+  "profile_type": "dynamic_edge_swarm",
+  "description": "Orchest Computing Hardware Profile. Online nodes are dynamically synchronized at runtime.",
+  "cluster_status": "IDLE",
+  "online_nodes_count": 0,
+  "online_nodes": [],
+  "device": "dynamic_online_cluster",
   "device_type": "cuda",
-  "timestamp": "2026-10-27 13:51:56",
+  "timestamp": "reference_baseline",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -268,54 +273,54 @@
     },
     "mps": {
       "device_type": "mps",
-      "timestamp": "2026-10-27 15:12:34",
-      "calibrated_effective_tflops": 1.66,
+      "timestamp": "2026-10-27 15:22:02",
+      "calibrated_effective_tflops": 2.15,
       "benchmark_scores": {
-        "cpu_gflops": 31.18,
-        "gpu_gflops": 1200.14,
-        "npu_gflops": 1659.43,
-        "all_gflops": 1227.73
+        "cpu_gflops": 30.81,
+        "gpu_gflops": 2153.77,
+        "npu_gflops": 983.88,
+        "all_gflops": 827.04
       },
       "benchmark_statistics": {
         "cpu": {
-          "median": 31.18,
-          "mean": 31.18,
+          "median": 30.81,
+          "mean": 30.81,
           "std": 0.0,
-          "min": 31.18,
-          "max": 31.18,
-          "p95": 31.18,
-          "ci_lower": 31.18,
-          "ci_upper": 31.18
+          "min": 30.81,
+          "max": 30.81,
+          "p95": 30.81,
+          "ci_lower": 30.81,
+          "ci_upper": 30.81
         },
         "gpu": {
-          "median": 1200.14,
-          "mean": 1200.14,
+          "median": 2153.77,
+          "mean": 2153.77,
           "std": 0.0,
-          "min": 1200.14,
-          "max": 1200.14,
-          "p95": 1200.14,
-          "ci_lower": 1200.14,
-          "ci_upper": 1200.14
+          "min": 2153.77,
+          "max": 2153.77,
+          "p95": 2153.77,
+          "ci_lower": 2153.77,
+          "ci_upper": 2153.77
         },
         "npu": {
-          "median": 1659.43,
-          "mean": 1659.43,
+          "median": 983.88,
+          "mean": 983.88,
           "std": 0.0,
-          "min": 1659.43,
-          "max": 1659.43,
-          "p95": 1659.43,
-          "ci_lower": 1659.43,
-          "ci_upper": 1659.43
+          "min": 983.88,
+          "max": 983.88,
+          "p95": 983.88,
+          "ci_lower": 983.88,
+          "ci_upper": 983.88
         },
         "all": {
-          "median": 1227.73,
-          "mean": 1227.73,
+          "median": 827.04,
+          "mean": 827.04,
           "std": 0.0,
-          "min": 1227.73,
-          "max": 1227.73,
-          "p95": 1227.73,
-          "ci_lower": 1227.73,
-          "ci_upper": 1227.73
+          "min": 827.04,
+          "max": 827.04,
+          "p95": 827.04,
+          "ci_lower": 827.04,
+          "ci_upper": 827.04
         }
       }
     },
@@ -329,5 +334,6 @@
         "all_gflops": 38.16
       }
     }
-  }
+  },
+  "last_cluster_sync": "2026-10-27 15:46:38"
 }

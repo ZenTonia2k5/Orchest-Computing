@@ -78,8 +78,9 @@ class HostOrchestrator:
         local_node = self.host_profiler.profile()
         self._last_host_profile_time = now
         setattr(local_node, "tcp_port", 5555)
+        dev_name = local_node.gpus[0].name if local_node.gpus else f"{platform.system()} CPU"
         cfg = self.node_configs.get(self.node_id, {})
-        setattr(local_node, "alias", cfg.get("alias", "Host Master (Mac)"))
+        setattr(local_node, "alias", cfg.get("alias", f"Host Master ({dev_name})"))
         setattr(local_node, "enabled", cfg.get("enabled", True))
         self.worker_nodes[self.node_id] = local_node
         self.worker_ports[self.node_id] = 5555

@@ -14,6 +14,7 @@ from ..network.discovery import UDPDiscoveryService, NodeBeacon
 from ..network.transport import TensorTransportServer, TensorTransportClient
 from ..network.protocol import MessageType
 from ..models.auto_slicer import AutoModelSlicer, ModelSliceModule
+from ..models.cache_cleaner import cleanup_incomplete_downloads
 
 logger = logging.getLogger("WorkerNode")
 
@@ -272,14 +273,19 @@ class WorkerNode:
                 )
                 self.status = "READY"
                 logger.info(f"Model Slice [{start_idx}..{end_idx}] loaded successfully on {device} via selective sharding.")
-            except Exception as e:
-                logger.warning(f"Background model slice load notice: {e}")
-                self.status = "READY"
+            except BaseException as e:
+                is_interrupted = isinstance(e, (KeyboardInterrupt, SystemExit))
+                if is_interrupted:
+                    logger.info("Model download/loading interrupted by user (SIGINT/abort).")
+                else:
+                    logger.warning(f"Background model slice load notice: {e}")
+                self.status = "IDLE"
                 try:
-                    from orchest.models.cache_cleaner import cleanup_incomplete_downloads
                     cleanup_incomplete_downloads(remove_aborted_models=True)
                 except Exception:
                     pass
+                if is_interrupted:
+                    return
 
         threading.Thread(target=_bg_load, daemon=True).start()
 
