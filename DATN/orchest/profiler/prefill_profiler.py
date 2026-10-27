@@ -503,9 +503,9 @@ class PrefillWorkloadProfiler:
         Ensures that PartitionCostCalculator and DynamicPartitioner use real measured throughput.
         """
         try:
-            with open(profile_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            tflops = float(data.get("calibrated_effective_tflops", 0.0))
+            from orchest.profiler.profile_manager import get_calibrated_tflops
+            target_dev = node.gpus[0].device_type if node.gpus else "cpu"
+            tflops = get_calibrated_tflops(device_type=target_dev, profile_path=profile_path)
             if tflops > 0 and node.gpus:
                 node.gpus[0].estimated_tflops = tflops
                 return True

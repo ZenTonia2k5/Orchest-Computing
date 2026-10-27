@@ -1,7 +1,7 @@
 {
   "device": "cuda:0",
   "device_type": "cuda",
-  "timestamp": "2026-10-03 09:43:54",
+  "timestamp": "2026-10-27 13:51:56",
   "dataset_role": "held_out_evaluation",
   "is_held_out": true,
   "do_not_calibrate": true,

@@ -270,15 +270,19 @@ class NodeProfiler:
             download_pct=100.0,
         )
 
-        # Auto-calibrate with empirical hardware profile if present
-        if os.path.exists("hardware_profile.json") and metrics.gpus:
+        # Auto-calibrate node accelerator metrics:
+        # 1. If this specific machine ran a real benchmark, use its measured TFLOPS.
+        # 2. Otherwise preserve dynamic hardware inspection (SM count, Apple chip family, CPU cores).
+        # 3. Only fall back to baseline catalog if hardware inspection returned 0.0.
+        if metrics.gpus:
             try:
-                import json
-                with open("hardware_profile.json", "r", encoding="utf-8") as f:
-                    p_data = json.load(f)
-                calib_tflops = float(p_data.get("calibrated_effective_tflops", 0.0))
-                if calib_tflops > 0:
-                    metrics.gpus[0].estimated_tflops = calib_tflops
+                from orchest.profiler.profile_manager import get_local_measured_tflops, get_calibrated_tflops
+                target_dev = metrics.gpus[0].device_type or "cpu"
+                local_tflops = get_local_measured_tflops(device_type=target_dev)
+                if local_tflops and local_tflops > 0:
+                    metrics.gpus[0].estimated_tflops = local_tflops
+                elif getattr(metrics.gpus[0], "estimated_tflops", 0.0) <= 0.0:
+                    metrics.gpus[0].estimated_tflops = get_calibrated_tflops(device_type=target_dev)
             except Exception:
                 pass
 

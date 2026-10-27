@@ -698,25 +698,15 @@ def run_client_hardware_rating(
 
             LATEST_BENCHMARK.update(result)
 
-            # Auto-save profile so Cost Model and DP can immediately use calibrated TFLOPs
+            # Auto-save profile using Multi-Device Profile Manager (keeps local machine and shared devices separated)
             if auto_save_profile:
                 try:
-                    import os, json
-                    p_file = "hardware_profile.json"
-                    existing_p = {}
-                    if os.path.exists(p_file):
-                        try:
-                            with open(p_file, "r", encoding="utf-8") as f:
-                                existing_p = json.load(f)
-                        except Exception:
-                            pass
-                    existing_p["calibrated_effective_tflops"] = round(tflops, 2)
-                    existing_p["device_type"] = hw_info.get("device_type", "cpu")
-                    existing_p["timestamp"] = result["timestamp"]
-                    existing_p["benchmark_scores"] = result["scores"]
-                    existing_p["benchmark_statistics"] = result["statistics"]
-                    with open(p_file, "w", encoding="utf-8") as f:
-                        json.dump(existing_p, f, indent=2)
+                    from orchest.profiler.profile_manager import save_device_profile
+                    save_device_profile(
+                        benchmark_result=result,
+                        device_type=hw_info.get("device_type", "cpu"),
+                        auto_save_local=True,
+                    )
                 except Exception:
                     pass
 
