@@ -1254,17 +1254,53 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ prompt: text, max_tokens: 64 })
             });
 
-            const data = await res.json();
-            const formattedText = (data.text || '').replace(/\n/g, '<br>');
-            assistantMsg.innerHTML = formattedText;
-            workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
 
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-            const tokSec = ((data.tokens_generated || 64) / (parseFloat(elapsed) || 1)).toFixed(1);
-            const speedEl = document.getElementById('worker-chat-speed');
-            if (speedEl) speedEl.innerText = `${tokSec} tok/s | ${elapsed}s (${data.tokens_generated || 64} tokens)`;
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let fullText = '';
+            let tokenCount = 0;
+            let buffer = '';
+            let firstTokenReceived = false;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const chunkLine of lines) {
+                    const trimmed = chunkLine.trim();
+                    if (!trimmed.startsWith('data: ')) continue;
+                    const dataStr = trimmed.slice(6).trim();
+                    if (dataStr === '[DONE]') break;
+
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (parsed.token) {
+                            if (!firstTokenReceived) {
+                                firstTokenReceived = true;
+                                assistantMsg.innerHTML = '';
+                            }
+                            fullText += parsed.token;
+                            tokenCount++;
+                            assistantMsg.innerHTML = fullText.replace(/\n/g, '<br>');
+                            workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
+
+                            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+                            const tokSec = (tokenCount / (parseFloat(elapsed) || 0.1)).toFixed(1);
+                            const speedEl = document.getElementById('worker-chat-speed');
+                            if (speedEl) speedEl.innerText = `${tokSec} tok/s | ${elapsed}s (${tokenCount} tokens)`;
+                        }
+                    } catch (e) {}
+                }
+            }
         } catch (err) {
-            assistantMsg.innerText = 'Failed to communicate with Swarm Host Master.';
+            assistantMsg.innerText = 'Failed to communicate with Swarm Host Master: ' + err.message;
         }
     }
 
@@ -1396,6 +1432,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function playSwarmConnectedChime() {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'sine';
+            // Ascending triad chime (C5 -> E5 -> G5)
+            osc.frequency.setValueAtTime(523.25, now);
+            osc.frequency.setValueAtTime(659.25, now + 0.08);
+            osc.frequency.setValueAtTime(783.99, now + 0.16);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+            osc.start(now);
+            osc.stop(now + 0.42);
+        } catch (e) {}
+    }
+
     async function fetchWorkerMetrics() {
         try {
             const res = await fetch('/api/worker/status');
@@ -1445,7 +1503,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         : '• Ready for model slice allocation';
                     workerConnectionLiveBanner.innerHTML = `🟢 <strong>Connected to Swarm Cluster</strong>: Local IP <code>${data.ip_address}:${data.tcp_port}</code> (UDP Beacon Active) ${sliceInfoText}`;
                     workerConnectionLiveBanner.style.color = 'var(--accent-emerald)';
+
+                    if (!window.__lastWorkerClusterConnected && !data.slice_info) {
+                        window.__lastWorkerClusterConnected = true;
+                        playSwarmConnectedChime();
+                        showToast({
+                            type: 'info',
+                            icon: '🛰️',
+                            title: '🟢 Worker Joined Swarm Cluster',
+                            message: `Broadcasting UDP Beacon on port 59001 from <code>${data.ip_address}:${data.tcp_port}</code>. Host Master can now discover and allocate layers to this computer!`,
+                            duration: 7000
+                        });
+                    }
                 } else {
+                    window.__lastWorkerClusterConnected = false;
                     workerConnectionLiveBanner.innerHTML = `⚪ <strong>Standalone Mode</strong> (Disconnected from LAN Swarm Cluster. Click "Connect to Swarm" to join).`;
                     workerConnectionLiveBanner.style.color = 'var(--text-muted)';
                 }
@@ -1474,7 +1545,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('worker-cpu-text').innerText = `${data.cpu_usage_pct}%`;
             document.getElementById('worker-cpu-bar').style.width = `${data.cpu_usage_pct}%`;
 
-            // Handle Slice Info
+            // Handle Slice Info & Special Swarm Connected Notification
             const sliceState = document.getElementById('worker-slice-state');
             const sliceText = document.getElementById('worker-slice-text');
             if (data.slice_info) {
@@ -1482,10 +1553,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 sliceState.innerText = 'ALLOCATED';
                 sliceState.className = 'slice-state-chip active';
                 sliceText.innerText = `Model: ${s.model_name} • Layers [${s.layer_start}..${s.layer_end}] of ${s.total_layers} (Stage ${s.stage_index + 1}/${s.total_stages})`;
+
+                const sliceKey = `${s.model_name}_${s.layer_start}_${s.layer_end}_${data.worker_status}`;
+                if (window.__lastWorkerSliceNotifKey !== sliceKey) {
+                    window.__lastWorkerSliceNotifKey = sliceKey;
+                    playSwarmConnectedChime();
+                    showToast({
+                        type: 'success',
+                        icon: '⚡',
+                        title: '🚀 Swarm Worker Paired with Host Master!',
+                        message: `Successfully connected to Host Master!<br>Allocated Stage <strong>${s.stage_index + 1}/${s.total_stages}</strong>: Model <code>${s.model_name}</code> (Layers [${s.layer_start}..${s.layer_end}]). Pipeline is synchronized and ready for collaborative inference!`,
+                        actionText: 'Open Swarm Chat',
+                        onAction: () => {
+                            const chatInput = document.getElementById('worker-chat-input');
+                            if (chatInput) chatInput.focus();
+                        },
+                        duration: 10000
+                    });
+
+                    // Add celebratory glowing pulse animation to UI components
+                    if (workerConnectionLiveBanner) {
+                        workerConnectionLiveBanner.classList.add('pulse-glow-success');
+                        setTimeout(() => workerConnectionLiveBanner.classList.remove('pulse-glow-success'), 3500);
+                    }
+                    if (workerConnectionStatusPill) {
+                        workerConnectionStatusPill.classList.add('pulse-glow-success');
+                        setTimeout(() => workerConnectionStatusPill.classList.remove('pulse-glow-success'), 3500);
+                    }
+                    if (sliceState) {
+                        sliceState.classList.add('pulse-glow-success');
+                        setTimeout(() => sliceState.classList.remove('pulse-glow-success'), 3500);
+                    }
+                }
             } else {
                 sliceState.innerText = 'IDLE';
                 sliceState.className = 'slice-state-chip';
                 sliceText.innerText = 'Listening for Host Orchestrator model slice dispatch...';
+                window.__lastWorkerSliceNotifKey = null;
             }
 
             // Handle Incoming Connection Invitations
