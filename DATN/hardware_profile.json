@@ -1,7 +1,7 @@
 {
   "device": "cuda:0",
   "device_type": "cuda",
-  "timestamp": "2026-10-03 09:43:54",
+  "timestamp": "2026-10-27 13:51:56",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -206,53 +206,53 @@
       }
     ]
   },
-  "calibrated_effective_tflops": 20.49,
+  "calibrated_effective_tflops": 18.09,
   "benchmark_scores": {
-    "cpu_gflops": 88.09,
-    "gpu_gflops": 16329.0,
-    "npu_gflops": 20494.11,
-    "all_gflops": 16301.93
+    "cpu_gflops": 46.86,
+    "gpu_gflops": 15469.26,
+    "npu_gflops": 18058.02,
+    "all_gflops": 18085.88
   },
   "benchmark_statistics": {
     "cpu": {
-      "median": 88.09,
-      "mean": 88.09,
-      "std": 6.0,
-      "min": 82.09,
-      "max": 94.1,
-      "p95": 93.5,
-      "ci_lower": 82.09,
-      "ci_upper": 94.1
+      "median": 46.86,
+      "mean": 46.86,
+      "std": 0.0,
+      "min": 46.86,
+      "max": 46.86,
+      "p95": 46.86,
+      "ci_lower": 46.86,
+      "ci_upper": 46.86
     },
     "gpu": {
-      "median": 16329.0,
-      "mean": 16329.0,
-      "std": 146.36,
-      "min": 16182.64,
-      "max": 16475.36,
-      "p95": 16460.72,
-      "ci_lower": 16182.64,
-      "ci_upper": 16475.36
+      "median": 15469.26,
+      "mean": 15469.26,
+      "std": 0.0,
+      "min": 15469.26,
+      "max": 15469.26,
+      "p95": 15469.26,
+      "ci_lower": 15469.26,
+      "ci_upper": 15469.26
     },
     "npu": {
-      "median": 20494.11,
-      "mean": 20494.11,
-      "std": 646.58,
-      "min": 19847.54,
-      "max": 21140.69,
-      "p95": 21076.03,
-      "ci_lower": 19847.54,
-      "ci_upper": 21140.69
+      "median": 18058.02,
+      "mean": 18058.02,
+      "std": 0.0,
+      "min": 18058.02,
+      "max": 18058.02,
+      "p95": 18058.02,
+      "ci_lower": 18058.02,
+      "ci_upper": 18058.02
     },
     "all": {
-      "median": 16301.93,
-      "mean": 16301.93,
-      "std": 177.07,
-      "min": 16124.86,
-      "max": 16479.0,
-      "p95": 16461.3,
-      "ci_lower": 16124.86,
-      "ci_upper": 16479.0
+      "median": 18085.88,
+      "mean": 18085.88,
+      "std": 0.0,
+      "min": 18085.88,
+      "max": 18085.88,
+      "p95": 18085.88,
+      "ci_lower": 18085.88,
+      "ci_upper": 18085.88
     }
   }
 }
