@@ -1,7 +1,7 @@
 {
   "device": "cuda:0",
-  "device_type": "mps",
-  "timestamp": "2026-10-27 14:50:03",
+  "device_type": "cuda",
+  "timestamp": "2026-10-27 13:51:56",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -206,53 +206,53 @@
       }
     ]
   },
-  "calibrated_effective_tflops": 2.51,
+  "calibrated_effective_tflops": 18.09,
   "benchmark_scores": {
-    "cpu_gflops": 38.16,
-    "gpu_gflops": 2134.7,
-    "npu_gflops": 2510.2,
-    "all_gflops": 2162.5
+    "cpu_gflops": 46.86,
+    "gpu_gflops": 15469.26,
+    "npu_gflops": 18058.02,
+    "all_gflops": 18085.88
   },
   "benchmark_statistics": {
     "cpu": {
-      "median": 38.16,
-      "mean": 38.16,
+      "median": 46.86,
+      "mean": 46.86,
       "std": 0.0,
-      "min": 38.16,
-      "max": 38.16,
-      "p95": 38.16,
-      "ci_lower": 38.16,
-      "ci_upper": 38.16
+      "min": 46.86,
+      "max": 46.86,
+      "p95": 46.86,
+      "ci_lower": 46.86,
+      "ci_upper": 46.86
     },
     "gpu": {
-      "median": 2134.7,
-      "mean": 2134.7,
+      "median": 15469.26,
+      "mean": 15469.26,
       "std": 0.0,
-      "min": 2134.7,
-      "max": 2134.7,
-      "p95": 2134.7,
-      "ci_lower": 2134.7,
-      "ci_upper": 2134.7
+      "min": 15469.26,
+      "max": 15469.26,
+      "p95": 15469.26,
+      "ci_lower": 15469.26,
+      "ci_upper": 15469.26
     },
     "npu": {
-      "median": 2510.2,
-      "mean": 2510.2,
+      "median": 18058.02,
+      "mean": 18058.02,
       "std": 0.0,
-      "min": 2510.2,
-      "max": 2510.2,
-      "p95": 2510.2,
-      "ci_lower": 2510.2,
-      "ci_upper": 2510.2
+      "min": 18058.02,
+      "max": 18058.02,
+      "p95": 18058.02,
+      "ci_lower": 18058.02,
+      "ci_upper": 18058.02
     },
     "all": {
-      "median": 2162.5,
-      "mean": 2162.5,
+      "median": 18085.88,
+      "mean": 18085.88,
       "std": 0.0,
-      "min": 2162.5,
-      "max": 2162.5,
-      "p95": 2162.5,
-      "ci_lower": 2162.5,
-      "ci_upper": 2162.5
+      "min": 18085.88,
+      "max": 18085.88,
+      "p95": 18085.88,
+      "ci_lower": 18085.88,
+      "ci_upper": 18085.88
     }
   }
 }

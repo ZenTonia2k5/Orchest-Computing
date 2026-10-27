@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from orchest.executor.host import HostOrchestrator
 from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
-from orchest.models.cache_cleaner import cleanup_incomplete_downloads
 
 app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
 
@@ -451,22 +450,6 @@ def toggle_engine(req: EngineToggleRequest):
         SWARM_ENGINE_STATE["next_benchmark_countdown_sec"] = SWARM_ENGINE_STATE["auto_benchmark_interval_sec"]
 
     return SWARM_ENGINE_STATE
-
-
-@app.on_event("shutdown")
-def on_app_shutdown():
-    print("[Server] 🧹 Running shutdown cache cleanup...")
-    cleanup_incomplete_downloads(remove_aborted_models=True)
-
-
-@app.post("/api/cache/clean")
-def clean_cache():
-    reclaimed = cleanup_incomplete_downloads(remove_aborted_models=True)
-    return {
-        "status": "SUCCESS",
-        "reclaimed_bytes": reclaimed,
-        "reclaimed_mb": round(reclaimed / (1024 * 1024), 2),
-    }
 
 
 
