@@ -10,7 +10,7 @@
       "device_type": "cpu",
       "accelerator": "Intel(R) Core(TM) i7-14650HX (CPU Engine)",
       "estimated_tflops": 2.4,
-      "usable_memory_mb": 4382.22,
+      "usable_memory_mb": 4372.95,
       "status": "ONLINE"
     }
   ],
@@ -388,5 +388,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-27 16:25:49"
+  "last_cluster_sync": "2026-10-27 16:25:59"
 }
