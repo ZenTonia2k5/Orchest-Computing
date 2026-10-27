@@ -1,12 +1,22 @@
 {
   "profile_type": "dynamic_edge_swarm",
   "description": "Orchest Computing Hardware Profile. Online nodes are dynamically synchronized at runtime.",
-  "cluster_status": "IDLE",
-  "online_nodes_count": 0,
-  "online_nodes": [],
+  "cluster_status": "ONLINE",
+  "online_nodes_count": 1,
+  "online_nodes": [
+    {
+      "node_id": "host_master",
+      "alias": "Host Master (Intel(R) Core(TM) i7-14650HX (CPU Engine))",
+      "device_type": "cpu",
+      "accelerator": "Intel(R) Core(TM) i7-14650HX (CPU Engine)",
+      "estimated_tflops": 2.4,
+      "usable_memory_mb": 4337.09,
+      "status": "ONLINE"
+    }
+  ],
   "device": "dynamic_online_cluster",
   "device_type": "cuda",
-  "timestamp": "reference_baseline",
+  "timestamp": "2026-10-27 16:25:18",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -211,64 +221,107 @@
       }
     ]
   },
-  "calibrated_effective_tflops": 18.09,
+  "calibrated_effective_tflops": 22.64,
   "benchmark_scores": {
-    "cpu_gflops": 46.86,
-    "gpu_gflops": 15469.26,
-    "npu_gflops": 18058.02,
-    "all_gflops": 18085.88
+    "cpu_gflops": 38.36,
+    "gpu_gflops": 18469.35,
+    "npu_gflops": 22636.45,
+    "all_gflops": 21072.86
   },
   "benchmark_statistics": {
     "cpu": {
-      "median": 46.86,
-      "mean": 46.86,
+      "median": 38.36,
+      "mean": 38.36,
       "std": 0.0,
-      "min": 46.86,
-      "max": 46.86,
-      "p95": 46.86,
-      "ci_lower": 46.86,
-      "ci_upper": 46.86
+      "min": 38.36,
+      "max": 38.36,
+      "p95": 38.36,
+      "ci_lower": 38.36,
+      "ci_upper": 38.36
     },
     "gpu": {
-      "median": 15469.26,
-      "mean": 15469.26,
+      "median": 18469.35,
+      "mean": 18469.35,
       "std": 0.0,
-      "min": 15469.26,
-      "max": 15469.26,
-      "p95": 15469.26,
-      "ci_lower": 15469.26,
-      "ci_upper": 15469.26
+      "min": 18469.35,
+      "max": 18469.35,
+      "p95": 18469.35,
+      "ci_lower": 18469.35,
+      "ci_upper": 18469.35
     },
     "npu": {
-      "median": 18058.02,
-      "mean": 18058.02,
+      "median": 22636.45,
+      "mean": 22636.45,
       "std": 0.0,
-      "min": 18058.02,
-      "max": 18058.02,
-      "p95": 18058.02,
-      "ci_lower": 18058.02,
-      "ci_upper": 18058.02
+      "min": 22636.45,
+      "max": 22636.45,
+      "p95": 22636.45,
+      "ci_lower": 22636.45,
+      "ci_upper": 22636.45
     },
     "all": {
-      "median": 18085.88,
-      "mean": 18085.88,
+      "median": 21072.86,
+      "mean": 21072.86,
       "std": 0.0,
-      "min": 18085.88,
-      "max": 18085.88,
-      "p95": 18085.88,
-      "ci_lower": 18085.88,
-      "ci_upper": 18085.88
+      "min": 21072.86,
+      "max": 21072.86,
+      "p95": 21072.86,
+      "ci_lower": 21072.86,
+      "ci_upper": 21072.86
     }
   },
   "devices": {
     "cuda": {
       "device_type": "cuda",
-      "calibrated_effective_tflops": 18.09,
+      "timestamp": "2026-10-27 16:25:18",
+      "calibrated_effective_tflops": 22.64,
       "benchmark_scores": {
-        "cpu_gflops": 46.86,
-        "gpu_gflops": 15469.26,
-        "npu_gflops": 18058.02,
-        "all_gflops": 18085.88
+        "cpu_gflops": 38.36,
+        "gpu_gflops": 18469.35,
+        "npu_gflops": 22636.45,
+        "all_gflops": 21072.86
+      },
+      "benchmark_statistics": {
+        "cpu": {
+          "median": 38.36,
+          "mean": 38.36,
+          "std": 0.0,
+          "min": 38.36,
+          "max": 38.36,
+          "p95": 38.36,
+          "ci_lower": 38.36,
+          "ci_upper": 38.36
+        },
+        "gpu": {
+          "median": 18469.35,
+          "mean": 18469.35,
+          "std": 0.0,
+          "min": 18469.35,
+          "max": 18469.35,
+          "p95": 18469.35,
+          "ci_lower": 18469.35,
+          "ci_upper": 18469.35
+        },
+        "npu": {
+          "median": 22636.45,
+          "mean": 22636.45,
+          "std": 0.0,
+          "min": 22636.45,
+          "max": 22636.45,
+          "p95": 22636.45,
+          "ci_lower": 22636.45,
+          "ci_upper": 22636.45
+        },
+        "all": {
+          "median": 21072.86,
+          "mean": 21072.86,
+          "std": 0.0,
+          "min": 21072.86,
+          "max": 21072.86,
+          "p95": 21072.86,
+          "ci_lower": 21072.86,
+          "ci_upper": 21072.86
+        }
       }
     },
     "mps": {
@@ -335,5 +388,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-27 15:55:26"
+  "last_cluster_sync": "2026-10-27 16:25:35"
 }
