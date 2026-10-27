@@ -59,9 +59,31 @@ class WorkerNode:
         self.connection_history: List[Dict[str, Any]] = []
 
     def start(self):
+        if getattr(self, "_started", False) and self.status != "OFFLINE":
+            logger.info("WorkerNode is already running.")
+            return
+
         logger.info(f"Starting WorkerNode ID={self.profiler.node_id} on TCP port {self.tcp_port}")
+        self._started = True
+        self.status = "IDLE"
+
+        # Re-create fresh transport server to guarantee clean socket binding
+        try:
+            self.transport_server.stop()
+        except Exception:
+            pass
+        self.transport_server = TensorTransportServer(
+            host="0.0.0.0", port=self.tcp_port, secret_key=self.secret_key, transport_type=self.transport_type
+        )
         self.transport_server.on_tensor_received_cb = self._on_message_received
         self.transport_server.start()
+
+        # Re-create fresh discovery service
+        try:
+            self.discovery_service.stop()
+        except Exception:
+            pass
+        self.discovery_service = UDPDiscoveryService(port=self.discovery_port)
 
         # Start listening for Host Beacons to auto-align transport mode
         def _on_host_beacon(payload):
@@ -103,8 +125,15 @@ class WorkerNode:
             logger.error(f"Failed to switch worker transport: {e}")
 
     def stop(self):
-        self.discovery_service.stop()
-        self.transport_server.stop()
+        self._started = False
+        try:
+            self.discovery_service.stop()
+        except Exception:
+            pass
+        try:
+            self.transport_server.stop()
+        except Exception:
+            pass
         self.status = "OFFLINE"
         try:
             from orchest.models.cache_cleaner import cleanup_incomplete_downloads

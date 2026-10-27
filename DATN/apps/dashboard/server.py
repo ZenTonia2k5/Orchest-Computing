@@ -33,7 +33,10 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
-local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=True)
+local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, auto_accept=True)
+
+# System Mode: "host" (Host Master) or "worker" (Worker Node) - strictly mutually exclusive
+CURRENT_SYSTEM_MODE = os.environ.get("ORCHEST_INITIAL_MODE", "host").lower()
 
 
 MODEL_CONFIGS = {
@@ -110,27 +113,35 @@ SWARM_ENGINE_STATE = {
 from orchest.profiler.hardware_benchmark import run_client_hardware_rating, LATEST_BENCHMARK
 
 
+class ModeSwitchRequest(BaseModel):
+    mode: str  # "host" | "worker"
+
+
 @app.on_event("startup")
 def startup_event():
-    # Start Host Discovery Listener
-    host_orchestrator.start_discovery()
-    
-    # Start Local Worker Node
-    try:
-        local_worker.start()
-    except Exception as e:
-        print(f"Local worker start notice: {e}")
-
-    try:
-        cfg = MODEL_CONFIGS.get("Qwen/Qwen2.5-0.5B-Instruct", {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
-        host_orchestrator.plan_model_slicing(
-            "Qwen/Qwen2.5-0.5B-Instruct",
-            num_layers=cfg["num_layers"],
-            hidden_size=cfg["hidden_size"],
-            intermediate_size=cfg["intermediate_size"],
-        )
-    except Exception as e:
-        pass
+    global CURRENT_SYSTEM_MODE
+    if CURRENT_SYSTEM_MODE == "worker":
+        # Start strictly as Worker Node
+        try:
+            local_worker.start()
+            print(f"[Orchest] ⚡ Started in WORKER MODE (Node ID: {local_worker.profiler.node_id})")
+        except Exception as e:
+            print(f"[Orchest] Local worker start notice: {e}")
+    else:
+        # Default: Start strictly as Host Master
+        CURRENT_SYSTEM_MODE = "host"
+        host_orchestrator.start_discovery()
+        print(f"[Orchest] 👑 Started in HOST MASTER MODE (Host ID: {host_orchestrator.node_id})")
+        try:
+            cfg = MODEL_CONFIGS.get("Qwen/Qwen2.5-0.5B-Instruct", {"num_layers": 24, "hidden_size": 896, "intermediate_size": 4864})
+            host_orchestrator.plan_model_slicing(
+                "Qwen/Qwen2.5-0.5B-Instruct",
+                num_layers=cfg["num_layers"],
+                hidden_size=cfg["hidden_size"],
+                intermediate_size=cfg["intermediate_size"],
+            )
+        except Exception:
+            pass
 
     # Background periodic auto-benchmark runner (runs on startup, and every 5 mins when inference engine is in Standby)
     def _bg_periodic_benchmark_loop():
@@ -193,6 +204,62 @@ def serve_index():
 
 
 # ---------------------------------------------------------
+# System Mode Management APIs (Host Master vs Worker Node)
+# ---------------------------------------------------------
+
+@app.get("/api/mode/status")
+def get_system_mode():
+    return {
+        "status": "SUCCESS",
+        "mode": CURRENT_SYSTEM_MODE,
+        "host_active": getattr(host_orchestrator, "_discovery_started", False),
+        "worker_status": local_worker.status,
+        "node_id": local_worker.profiler.node_id if CURRENT_SYSTEM_MODE == "worker" else host_orchestrator.node_id,
+        "ip": local_worker.profiler.get_ip_address(),
+    }
+
+
+@app.post("/api/mode/switch")
+def switch_system_mode(req: ModeSwitchRequest):
+    global CURRENT_SYSTEM_MODE
+    target = req.mode.lower().strip()
+    if target not in ("host", "worker"):
+        raise HTTPException(status_code=400, detail="Mode must be 'host' or 'worker'")
+
+    if target == CURRENT_SYSTEM_MODE:
+        return {
+            "status": "SUCCESS",
+            "mode": CURRENT_SYSTEM_MODE,
+            "message": f"Already operating in {CURRENT_SYSTEM_MODE.upper()} mode.",
+        }
+
+    if target == "host":
+        # Mutually exclusive: Stop worker node completely to free port 5555 and halt worker beacons
+        local_worker.stop()
+        # Start host orchestrator discovery listener and host beacons
+        host_orchestrator.start_discovery()
+        CURRENT_SYSTEM_MODE = "host"
+        print("[Orchest] 👑 Switched to HOST MASTER MODE (Worker stopped).")
+        return {
+            "status": "SUCCESS",
+            "mode": "host",
+            "message": "Switched to Host Master mode. Scanning LAN for workers...",
+        }
+    elif target == "worker":
+        # Mutually exclusive: Stop host discovery listener and host beacons
+        host_orchestrator.stop()
+        # Start worker node broadcasting to LAN
+        local_worker.start()
+        CURRENT_SYSTEM_MODE = "worker"
+        print(f"[Orchest] ⚡ Switched to WORKER MODE (Node ID: {local_worker.profiler.node_id}, Host stopped).")
+        return {
+            "status": "SUCCESS",
+            "mode": "worker",
+            "message": f"Switched to Worker mode. Broadcasting UDP beacon to Host as {local_worker.profiler.node_id}.",
+        }
+
+
+# ---------------------------------------------------------
 # Cluster & Fleet Management APIs
 # ---------------------------------------------------------
 
@@ -213,6 +280,7 @@ def get_cluster_status():
         pass
 
     return {
+        "current_mode": CURRENT_SYSTEM_MODE,
         "node_count": len(nodes),
         "active_nodes_count": len([n for n in nodes if getattr(n, "enabled", True)]),
         "active_model": host_orchestrator.active_model_name or "Qwen/Qwen2.5-0.5B-Instruct",
