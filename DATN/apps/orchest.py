@@ -27,12 +27,47 @@ def handle_exit_cleanup(*args):
         print("[Orchest] ✨ Cache is clean. No broken download files found.")
 
 
+import argparse
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Orchest Computing: Universal Edge Swarm MLOps Platform")
+    parser.add_argument(
+        "--mode",
+        choices=["host", "worker"],
+        default="host",
+        help="Initial operating mode: 'host' (Master Orchestrator) or 'worker' (Worker Node). Default: 'host'",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the MLOps Web Dashboard. Default: 8000",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not automatically open the default web browser on launch",
+    )
+    args = parser.parse_args()
+
+    # Pass initial mode to FastAPI server module
+    os.environ["ORCHEST_INITIAL_MODE"] = args.mode.lower()
+
+    mode_title = "👑 HOST MASTER MODE" if args.mode == "host" else "⚡ WORKER NODE MODE"
+    mode_desc = (
+        "Scanning LAN for workers and managing swarm model slicing"
+        if args.mode == "host"
+        else "Broadcasting UDP discovery beacon & waiting for Host model tasks"
+    )
+
     print("\n========================================================================")
     print("  🚀 ORCHEST COMPUTING: UNIVERSAL EDGE SWARM MLOPS PLATFORM")
     print("========================================================================")
-    print("  Universal App Active: Host Master, Worker Node & Fleet Manager")
-    print("  Launching MLOps Web Dashboard at http://localhost:8000 ...")
+    print(f"  Active Mode: {mode_title}")
+    print(f"  Role: {mode_desc}")
+    print(f"  Dashboard: http://localhost:{args.port}")
+    print("  Note: You can switch between Host and Worker mode anytime in the UI!")
     print("========================================================================\n")
 
     # 1. Clean up any leftover incomplete downloads from previous runs on startup
@@ -42,19 +77,20 @@ def main():
     atexit.register(handle_exit_cleanup)
 
     # Automatically open web browser after 1.2 seconds
-    def open_browser():
-        time.sleep(1.2)
-        try:
-            webbrowser.open("http://localhost:8000")
-        except Exception:
-            pass
+    if not args.no_browser:
+        def open_browser():
+            time.sleep(1.2)
+            try:
+                webbrowser.open(f"http://localhost:{args.port}")
+            except Exception:
+                pass
 
-    threading.Thread(target=open_browser, daemon=True).start()
+        threading.Thread(target=open_browser, daemon=True).start()
 
     # Start FastAPI Uvicorn Server
     from apps.dashboard.server import app
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

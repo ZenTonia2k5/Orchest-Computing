@@ -104,7 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (target === 'worker') {
             btnWorker.classList.add('active');
             viewWorker.classList.add('active');
-            headerBadge.innerText = '⚡ Worker Node Control Active';
+            headerBadge.innerText = '⚡ Worker Node Active (Broadcasting)';
             fetchWorkerMetrics();
         } else if (target === 'manage') {
             btnManage.classList.add('active');
@@ -114,15 +114,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    btnHost.addEventListener('click', () => switchView('host'));
-    btnWorker.addEventListener('click', () => switchView('worker'));
-    btnManage.addEventListener('click', () => switchView('manage'));
+    async function handleModeSwitch(targetMode) {
+        if (targetMode === 'manage') {
+            switchView('manage');
+            return;
+        }
 
-    // Restore saved mode preference
-    const savedActiveMode = localStorage.getItem('orchest_active_mode') || 'host';
-    if (savedActiveMode !== 'host') {
-        switchView(savedActiveMode);
+        switchView(targetMode);
+
+        try {
+            const resp = await fetch('/api/mode/switch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: targetMode })
+            });
+            const data = await resp.json();
+            if (data.status === 'SUCCESS') {
+                if (targetMode === 'worker') {
+                    showToast({
+                        type: 'info',
+                        icon: '⚡',
+                        title: 'Chuyển sang Chế độ Worker',
+                        message: data.message || 'Worker đang phát tín hiệu UDP tìm kiếm Host trên mạng LAN.',
+                        duration: 5000
+                    });
+                } else if (targetMode === 'host') {
+                    showToast({
+                        type: 'success',
+                        icon: '👑',
+                        title: 'Chuyển sang Chế độ Host Master',
+                        message: data.message || 'Host Master đang quét các Worker trên mạng LAN.',
+                        duration: 5000
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Failed to switch backend mode:', e);
+        }
     }
+
+    btnHost.addEventListener('click', () => handleModeSwitch('host'));
+    btnWorker.addEventListener('click', () => handleModeSwitch('worker'));
+    btnManage.addEventListener('click', () => handleModeSwitch('manage'));
+
+    // Sync initial mode preference from backend
+    fetch('/api/mode/status')
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.mode) {
+                switchView(data.mode);
+            } else {
+                const savedActiveMode = localStorage.getItem('orchest_active_mode') || 'host';
+                switchView(savedActiveMode);
+            }
+        })
+        .catch(() => {
+            const savedActiveMode = localStorage.getItem('orchest_active_mode') || 'host';
+            switchView(savedActiveMode);
+        });
 
     // ---------------------------------------------------------
     // Component Collapsible & Visibility Toolbar Handlers
