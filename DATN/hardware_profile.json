@@ -1,31 +1,12 @@
 {
   "profile_type": "dynamic_edge_swarm",
   "description": "Orchest Computing Hardware Profile. Online nodes are dynamically synchronized at runtime.",
-  "cluster_status": "ONLINE",
-  "online_nodes_count": 2,
-  "online_nodes": [
-    {
-      "node_id": "host_master",
-      "alias": "Host Master (Intel(R) Core(TM) i7-14650HX (CPU Engine))",
-      "device_type": "cpu",
-      "accelerator": "Intel(R) Core(TM) i7-14650HX (CPU Engine)",
-      "estimated_tflops": 2.4,
-      "usable_memory_mb": 4066.33,
-      "status": "ONLINE"
-    },
-    {
-      "node_id": "node_darwin_43599213",
-      "alias": "darwin-node-435992",
-      "device_type": "mps",
-      "accelerator": "Apple M2 GPU (Metal MPS)",
-      "estimated_tflops": 1.31,
-      "usable_memory_mb": 1488.23,
-      "status": "ONLINE"
-    }
-  ],
+  "cluster_status": "IDLE",
+  "online_nodes_count": 0,
+  "online_nodes": [],
   "device": "dynamic_online_cluster",
   "device_type": "cuda",
-  "timestamp": "2026-10-27 16:28:08",
+  "timestamp": "2026-10-27 17:25:18",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -230,106 +211,106 @@
       }
     ]
   },
-  "calibrated_effective_tflops": 21.4,
+  "calibrated_effective_tflops": 21.88,
   "benchmark_scores": {
-    "cpu_gflops": 37.93,
-    "gpu_gflops": 20267.02,
-    "npu_gflops": 21395.15,
-    "all_gflops": 20532.65
+    "cpu_gflops": 38.81,
+    "gpu_gflops": 18937.37,
+    "npu_gflops": 21877.95,
+    "all_gflops": 19541.02
   },
   "benchmark_statistics": {
     "cpu": {
-      "median": 37.93,
-      "mean": 37.93,
+      "median": 38.81,
+      "mean": 38.81,
       "std": 0.0,
-      "min": 37.93,
-      "max": 37.93,
-      "p95": 37.93,
-      "ci_lower": 37.93,
-      "ci_upper": 37.93
+      "min": 38.81,
+      "max": 38.81,
+      "p95": 38.81,
+      "ci_lower": 38.81,
+      "ci_upper": 38.81
     },
     "gpu": {
-      "median": 20267.02,
-      "mean": 20267.02,
+      "median": 18937.37,
+      "mean": 18937.37,
       "std": 0.0,
-      "min": 20267.02,
-      "max": 20267.02,
-      "p95": 20267.02,
-      "ci_lower": 20267.02,
-      "ci_upper": 20267.02
+      "min": 18937.37,
+      "max": 18937.37,
+      "p95": 18937.37,
+      "ci_lower": 18937.37,
+      "ci_upper": 18937.37
     },
     "npu": {
-      "median": 21395.15,
-      "mean": 21395.15,
+      "median": 21877.95,
+      "mean": 21877.95,
       "std": 0.0,
-      "min": 21395.15,
-      "max": 21395.15,
-      "p95": 21395.15,
-      "ci_lower": 21395.15,
-      "ci_upper": 21395.15
+      "min": 21877.95,
+      "max": 21877.95,
+      "p95": 21877.95,
+      "ci_lower": 21877.95,
+      "ci_upper": 21877.95
     },
     "all": {
-      "median": 20532.65,
-      "mean": 20532.65,
+      "median": 19541.02,
+      "mean": 19541.02,
       "std": 0.0,
-      "min": 20532.65,
-      "max": 20532.65,
-      "p95": 20532.65,
-      "ci_lower": 20532.65,
-      "ci_upper": 20532.65
+      "min": 19541.02,
+      "max": 19541.02,
+      "p95": 19541.02,
+      "ci_lower": 19541.02,
+      "ci_upper": 19541.02
     }
   },
   "devices": {
     "cuda": {
       "device_type": "cuda",
-      "timestamp": "2026-10-27 16:28:08",
-      "calibrated_effective_tflops": 21.4,
+      "timestamp": "2026-10-27 17:25:18",
+      "calibrated_effective_tflops": 21.88,
       "benchmark_scores": {
-        "cpu_gflops": 37.93,
-        "gpu_gflops": 20267.02,
-        "npu_gflops": 21395.15,
-        "all_gflops": 20532.65
+        "cpu_gflops": 38.81,
+        "gpu_gflops": 18937.37,
+        "npu_gflops": 21877.95,
+        "all_gflops": 19541.02
       },
       "benchmark_statistics": {
         "cpu": {
-          "median": 37.93,
-          "mean": 37.93,
+          "median": 38.81,
+          "mean": 38.81,
           "std": 0.0,
-          "min": 37.93,
-          "max": 37.93,
-          "p95": 37.93,
-          "ci_lower": 37.93,
-          "ci_upper": 37.93
+          "min": 38.81,
+          "max": 38.81,
+          "p95": 38.81,
+          "ci_lower": 38.81,
+          "ci_upper": 38.81
         },
         "gpu": {
-          "median": 20267.02,
-          "mean": 20267.02,
+          "median": 18937.37,
+          "mean": 18937.37,
           "std": 0.0,
-          "min": 20267.02,
-          "max": 20267.02,
-          "p95": 20267.02,
-          "ci_lower": 20267.02,
-          "ci_upper": 20267.02
+          "min": 18937.37,
+          "max": 18937.37,
+          "p95": 18937.37,
+          "ci_lower": 18937.37,
+          "ci_upper": 18937.37
         },
         "npu": {
-          "median": 21395.15,
-          "mean": 21395.15,
+          "median": 21877.95,
+          "mean": 21877.95,
           "std": 0.0,
-          "min": 21395.15,
-          "max": 21395.15,
-          "p95": 21395.15,
-          "ci_lower": 21395.15,
-          "ci_upper": 21395.15
+          "min": 21877.95,
+          "max": 21877.95,
+          "p95": 21877.95,
+          "ci_lower": 21877.95,
+          "ci_upper": 21877.95
         },
         "all": {
-          "median": 20532.65,
-          "mean": 20532.65,
+          "median": 19541.02,
+          "mean": 19541.02,
           "std": 0.0,
-          "min": 20532.65,
-          "max": 20532.65,
-          "p95": 20532.65,
-          "ci_lower": 20532.65,
-          "ci_upper": 20532.65
+          "min": 19541.02,
+          "max": 19541.02,
+          "p95": 19541.02,
+          "ci_lower": 19541.02,
+          "ci_upper": 19541.02
         }
       }
     },
@@ -397,5 +378,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-27 16:28:56"
+  "last_cluster_sync": "2026-10-27 17:34:55"
 }

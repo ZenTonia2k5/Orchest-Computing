@@ -1,7 +1,7 @@
 {
   "device": "dynamic_online_cluster",
   "device_type": "cuda",
-  "timestamp": "reference_baseline",
+  "timestamp": "2026-10-27 17:25:18",
   "dataset_role": "calibration_training",
   "models": {
     "Qwen2.5-0.5B": [

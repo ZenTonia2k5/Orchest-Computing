@@ -1,5 +1,6 @@
 import itertools
 import math
+from array import array
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple, Optional, Any
 
@@ -413,6 +414,11 @@ class DynamicPartitioner:
             full_cuts = (0,) + cuts + (N,)
             total_cost = 0.0
             feasible = True
+            # Index of the last node that actually received layers. A bypassed node is
+            # not the sender of the next activation, so the transfer must be charged
+            # against this node rather than against nodes[s-1]; otherwise the score
+            # computed here disagrees with the cost of the reconstructed plan below.
+            prev_active = -1
 
             for s in range(K):
                 start_l = full_cuts[s]
@@ -437,8 +443,8 @@ class DynamicPartitioner:
                     break
 
                 comm_time = 0.0
-                if s > 0 and start_l > 0:
-                    prev_node = nodes[s - 1]
+                if prev_active >= 0 and start_l > 0:
+                    prev_node = nodes[prev_active]
                     rtt = rtt_matrix.get((prev_node.node_id, nodes[s].node_id), 1.0)
                     bw = bw_matrix.get((prev_node.node_id, nodes[s].node_id), 1000.0)
                     comm_time = self.cost_calc.comm_time_ms(
@@ -446,6 +452,7 @@ class DynamicPartitioner:
                     )
 
                 total_cost += c_time + comm_time
+                prev_active = s
 
             if feasible and total_cost < best_cost:
                 best_cost = total_cost
@@ -504,6 +511,416 @@ class DynamicPartitioner:
             )
 
         return assignments, round(best_cost, 2)
+
+    def permutation_oracle_search(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        **kwargs
+    ) -> Tuple[List[SliceAssignment], float]:
+        """
+        Assignment-aware exhaustive Oracle.
+
+        measured_oracle_search() enumerates every contiguous cut vector but keeps the
+        caller's stage <-> node binding (stage s always runs on nodes[s]), which is the
+        same restriction the fixed-order partition() operates under. Comparing the two
+        therefore validates the cut search only; it cannot detect a suboptimal node
+        assignment. This wrapper closes that gap by repeating the exhaustive cut search
+        over every permutation of the fleet, so the result is optimal over the full
+        space of (ordered node selection x contiguous cuts).
+
+        Cost: O(K! * C(N+K-1, K-1) * K) stage evaluations. Intended for small
+        validation instances only -- it is the reference the DP is checked against,
+        not a production solver.
+        """
+        best_assignments: Optional[List[SliceAssignment]] = None
+        best_cost = float("inf")
+
+        for perm in itertools.permutations(nodes):
+            try:
+                assignments, cost = self.measured_oracle_search(layers, list(perm), **kwargs)
+            except RuntimeError:
+                # This ordering admits no feasible cut vector; another may.
+                continue
+            if cost < best_cost:
+                best_cost = cost
+                best_assignments = assignments
+
+        if best_assignments is None:
+            raise RuntimeError(
+                f"No feasible partition found by the permutation Oracle across "
+                f"{math.factorial(len(nodes))} orderings of {len(nodes)} nodes."
+            )
+        return best_assignments, best_cost
+
+    # ------------------------------------------------------------------
+    # Assignment-optimal Subset DP (Held-Karp style, over node subsets)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _node_device_type(node: NodeMetrics) -> str:
+        """
+        Mirrors the device detection inside PartitionCostCalculator.compute_time_ms so
+        that the working set reported on an assignment is the one the feasibility check
+        actually evaluated.
+        """
+        if node.gpus:
+            return max(node.gpus, key=lambda g: g.vram_free_mb).device_type
+        return "cpu"
+
+    @staticmethod
+    def _layer_prefix_sums(layers: List[LayerProfile]) -> Tuple[List[float], List[float]]:
+        """Prefix sums of layer weights (MB) and FLOPs/token for O(1) interval queries."""
+        n = len(layers)
+        pref_weights = [0.0] * (n + 1)
+        pref_flops = [0.0] * (n + 1)
+        for idx, lyr in enumerate(layers):
+            pref_weights[idx + 1] = pref_weights[idx] + lyr.weight_memory_mb
+            pref_flops[idx + 1] = pref_flops[idx] + lyr.flops_per_token
+        return pref_weights, pref_flops
+
+    def _precompute_stage_costs(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        pref_weights: List[float],
+        pref_flops: List[float],
+        phase: str,
+        prompt_len: int,
+        max_seq_len: Optional[int],
+        batch_size: int,
+        concurrency: int,
+        runtime_reserve_mb: float,
+        alpha: float,
+    ) -> array:
+        """
+        Memoizes c(a, b, v), the cost of running layers [a..b] on nodes[v], flattened as
+        C[v * N * N + a * N + b]. Infeasible or never-queried entries hold +inf.
+
+        compute_time_ms() already folds the hard memory ceiling in by returning +inf when
+        M_stage(a..b, v) > alpha * M_usable(v). Evaluating it once per (segment, node)
+        pair keeps the DP's inner loop pure arithmetic: without this the subset DP would
+        issue O(2^K * K^2 * N^2) cost-model calls instead of O(K * N^2).
+
+        The working set is monotone non-decreasing in b for a fixed a -- weights and KV
+        cache both accumulate over the segment, and the transient term is derived from
+        layers[a] alone -- so once a segment overflows the ceiling every longer segment
+        from the same start overflows too, and the scan can stop early.
+        """
+        N = len(layers)
+        K = len(nodes)
+        INF = float("inf")
+        C = array("d", [INF]) * (K * N * N)
+
+        for v in range(K):
+            node_v = nodes[v]
+            base_v = v * N * N
+            for a in range(N):
+                row = base_v + a * N
+                for b in range(a, N):
+                    cost = self.cost_calc.compute_time_ms(
+                        layers, a, b, node_v,
+                        phase=phase, prompt_len=prompt_len,
+                        max_seq_len=max_seq_len, batch_size=batch_size,
+                        concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
+                        alpha=alpha,
+                        cached_weights_mb=pref_weights[b + 1] - pref_weights[a],
+                        cached_linear_flops=pref_flops[b + 1] - pref_flops[a],
+                    )
+                    if cost == INF:
+                        break
+                    C[row + b] = cost
+        return C
+
+    def _precompute_link_costs(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        rtt_matrix: Dict[Tuple[str, str], float],
+        bw_matrix: Dict[Tuple[str, str], float],
+        batch_size: int,
+    ) -> array:
+        """
+        Memoizes w(p, u, v), the cost of shipping the activation produced by layer p from
+        nodes[u] to nodes[v] (i.e. the cut between layer p and layer p+1), flattened as
+        W[(p * K + u) * K + v]. Same-node entries stay 0.0, matching comm_time_ms().
+        """
+        N = len(layers)
+        K = len(nodes)
+        W = array("d", [0.0]) * (N * K * K)
+
+        for p in range(N - 1):
+            tensor_bytes = layers[p].output_tensor_bytes
+            for u in range(K):
+                for v in range(K):
+                    if u == v:
+                        continue
+                    rtt = rtt_matrix.get((nodes[u].node_id, nodes[v].node_id), 1.0)
+                    bw = bw_matrix.get((nodes[u].node_id, nodes[v].node_id), 1000.0)
+                    W[(p * K + u) * K + v] = self.cost_calc.comm_time_ms(
+                        tensor_bytes, nodes[u], nodes[v], rtt, bw, batch_size=batch_size
+                    )
+        return W
+
+    def solve_subset_dp(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        rtt_matrix: Optional[Dict[Tuple[str, str], float]] = None,
+        bw_matrix: Optional[Dict[Tuple[str, str], float]] = None,
+        prompt_len: int = 1,
+        max_seq_len: Optional[int] = None,
+        batch_size: int = 1,
+        concurrency: int = 1,
+        runtime_reserve_mb: float = 0.0,
+        phase: str = "prefill",
+        alpha: float = 0.90,
+        objective: str = "sum",
+        max_subset_nodes: int = 12,
+    ) -> Tuple[List[SliceAssignment], float]:
+        """
+        Exact subset DP over node sets. Returns (assignments, optimal_objective_value).
+
+        Unlike partition(), which binds pipeline stage s to nodes[s] and can therefore
+        only drop nodes from the tail of the list, this solver treats the node assignment
+        itself as a decision variable.
+
+            State       D[S][v][i] = min cost to execute layers 0..i using exactly the
+                        node set S, with v in S running the final stage.
+
+            Base        D[{v}][v][i] = c(0, i, v)
+
+            Transition  D[S | {u}][u][j] = min over v in S, i < j of
+                            D[S][v][i]  (+ | max)  w(i, v, u) + c(i+1, j, u)
+                        for u not in S
+
+            Answer      min over S subset of V, v in S of D[S][v][N-1]
+
+        where c(a, b, v) is the stage cost (+inf when the working set breaches
+        alpha * M_usable(v)) and w(p, u, v) is the activation transfer cost across the
+        cut after layer p.
+
+        The `u not in S` guard is load-bearing, not an optimization. M_stage is a per-node
+        aggregate, so a node holding two disjoint segments would need its working sets
+        summed before the ceiling is applied. Searching only at-most-once assignments
+        keeps the per-segment memory check sound. (This is exactly the invariant the
+        previous dp[layer][node] formulation in core_engine/dp_solver.cpp lacked, which
+        let it score node-reusing plans as feasible.)
+
+        A node receiving zero layers is free: simply omit it from S. There is no prefix
+        restriction, so a weak node in the middle of the fleet list can be skipped.
+
+        objective:
+            "sum"        minimize sum of stage times -- single-request prefill TTFT.
+            "bottleneck" minimize max stage time -- steady-state pipeline throughput.
+        Both decompose over the same per-stage quantity t_s = w_in(s) + c(s), i.e. the
+        incoming transfer is charged to the downstream stage. That models the blocking
+        recv-then-compute behaviour of the current transport; it is not valid for an
+        implementation that overlaps transfer with compute.
+
+        Complexity: O(2^K * K^2 * N^2) time and O(2^K * K * N) memory, plus O(K * N^2)
+        cost-model evaluations -- the same number partition() makes. Exact for any K
+        within max_subset_nodes.
+        """
+        if objective not in ("sum", "bottleneck"):
+            raise ValueError(
+                f"objective must be 'sum' or 'bottleneck', got {objective!r}"
+            )
+
+        N = len(layers)
+        K = len(nodes)
+        if N == 0 or K == 0:
+            return [], 0.0
+        if K > max_subset_nodes:
+            raise ValueError(
+                f"Subset DP is exponential in fleet size: K={K} exceeds "
+                f"max_subset_nodes={max_subset_nodes} (2^{K} node subsets). Raise "
+                f"max_subset_nodes to accept the cost, or call partition() for a "
+                f"fixed-order O(K*N^2) plan."
+            )
+
+        rtt_matrix = rtt_matrix or {}
+        bw_matrix = bw_matrix or {}
+        INF = float("inf")
+        use_sum = (objective == "sum")
+
+        pref_weights, pref_flops = self._layer_prefix_sums(layers)
+        C = self._precompute_stage_costs(
+            layers, nodes, pref_weights, pref_flops,
+            phase=phase, prompt_len=prompt_len, max_seq_len=max_seq_len,
+            batch_size=batch_size, concurrency=concurrency,
+            runtime_reserve_mb=runtime_reserve_mb, alpha=alpha,
+        )
+        W = self._precompute_link_costs(layers, nodes, rtt_matrix, bw_matrix, batch_size)
+
+        n_states = (1 << K) * K * N
+        dp = array("d", [INF]) * n_states
+        parent_v = array("i", [-1]) * n_states   # node index of the preceding stage
+        parent_i = array("i", [-1]) * n_states   # last layer of the preceding stage
+
+        # Base case: node v alone covers layers 0..i
+        for v in range(K):
+            base = (((1 << v) * K) + v) * N
+            cv = v * N * N
+            for i in range(N):
+                cost = C[cv + i]          # a = 0, so the row offset is 0
+                if cost != INF:
+                    dp[base + i] = cost
+
+        # Forward relaxation. mask | (1 << u) is strictly greater than mask, so ascending
+        # mask order is a valid topological order over the state graph.
+        for mask in range(1, 1 << K):
+            for v in range(K):
+                if not (mask >> v) & 1:
+                    continue
+                vbase = ((mask * K) + v) * N
+                for i in range(N - 1):
+                    cur = dp[vbase + i]
+                    if cur == INF:
+                        continue
+                    wrow = (i * K + v) * K
+                    for u in range(K):
+                        if (mask >> u) & 1:
+                            continue
+                        link = W[wrow + u]
+                        ubase = (((mask | (1 << u)) * K) + u) * N
+                        crow = u * N * N + (i + 1) * N
+                        for j in range(i + 1, N):
+                            cost = C[crow + j]
+                            if cost == INF:
+                                break     # monotone in j: no longer segment fits either
+                            stage = link + cost
+                            cand = cur + stage if use_sum else (cur if cur > stage else stage)
+                            if cand < dp[ubase + j]:
+                                dp[ubase + j] = cand
+                                parent_v[ubase + j] = v
+                                parent_i[ubase + j] = i
+
+        # Answer: any subset, any final node, having consumed every layer
+        last = N - 1
+        best_cost = INF
+        best_mask = -1
+        best_v = -1
+        for mask in range(1, 1 << K):
+            for v in range(K):
+                if not (mask >> v) & 1:
+                    continue
+                cost = dp[((mask * K) + v) * N + last]
+                if cost < best_cost:
+                    best_cost = cost
+                    best_mask = mask
+                    best_v = v
+
+        if best_mask == -1:
+            raise RuntimeError(
+                f"Dynamic Slicing impossible: no assignment of {N} layers over {K} nodes "
+                f"satisfies M_stage <= alpha * M_usable (alpha={alpha})."
+            )
+
+        # Backtrack the optimal (segment, node) trace
+        raw_assignments: List[Tuple[int, int, int]] = []
+        mask, v, i = best_mask, best_v, last
+        while True:
+            idx = ((mask * K) + v) * N + i
+            pv = parent_v[idx]
+            pi = parent_i[idx]
+            start_l = 0 if pv == -1 else pi + 1
+            raw_assignments.append((start_l, i, v))
+            if pv == -1:
+                break
+            mask ^= (1 << v)
+            v, i = pv, pi
+        raw_assignments.reverse()
+
+        assignments = []
+        for pos, (start_l, end_l, node_idx) in enumerate(raw_assignments):
+            node = nodes[node_idx]
+            c_time = C[node_idx * N * N + start_l * N + end_l]
+
+            comm_time = 0.0
+            if pos > 0:
+                prev_idx = raw_assignments[pos - 1][2]
+                comm_time = W[((start_l - 1) * K + prev_idx) * K + node_idx]
+
+            ws_mb = self.cost_calc.calculate_working_set_mb(
+                layers, start_l, end_l,
+                prompt_len=prompt_len, max_seq_len=max_seq_len,
+                batch_size=batch_size, concurrency=concurrency,
+                runtime_reserve_mb=runtime_reserve_mb,
+                device_type=self._node_device_type(node),
+                cached_weights_mb=pref_weights[end_l + 1] - pref_weights[start_l],
+            )
+
+            assignments.append(
+                SliceAssignment(
+                    node=node,
+                    layer_start=start_l,
+                    layer_end=end_l,
+                    layers_count=end_l - start_l + 1,
+                    estimated_compute_ms=round(c_time, 2),
+                    estimated_comm_ms=round(comm_time, 2),
+                    working_set_mb=round(ws_mb, 2),
+                )
+            )
+
+        return assignments, best_cost
+
+    def partition_subset_dp(
+        self,
+        layers: List[LayerProfile],
+        nodes: List[NodeMetrics],
+        rtt_matrix: Optional[Dict[Tuple[str, str], float]] = None,
+        bw_matrix: Optional[Dict[Tuple[str, str], float]] = None,
+        ratios: Optional[List[float]] = None,
+        prompt_len: int = 1,
+        max_seq_len: Optional[int] = None,
+        batch_size: int = 1,
+        concurrency: int = 1,
+        runtime_reserve_mb: float = 0.0,
+        phase: str = "prefill",
+        alpha: float = 0.90,
+        objective: str = "sum",
+        max_subset_nodes: int = 12,
+    ) -> List[SliceAssignment]:
+        """
+        Drop-in replacement for partition() backed by the exact subset DP, so the node
+        assignment is optimized rather than taken from the caller's list order.
+        See solve_subset_dp() for the recurrence; as with partition(), a non-empty
+        `ratios` short-circuits to operator-specified ratio cutting.
+        """
+        if ratios is not None and len(ratios) > 0:
+            return self.partition_by_ratio(
+                layers, nodes, ratios, rtt_matrix, bw_matrix,
+                prompt_len=prompt_len, max_seq_len=max_seq_len,
+                batch_size=batch_size, concurrency=concurrency,
+                runtime_reserve_mb=runtime_reserve_mb, phase=phase,
+                alpha=alpha
+            )
+
+        assignments, _ = self.solve_subset_dp(
+            layers=layers, nodes=nodes,
+            rtt_matrix=rtt_matrix, bw_matrix=bw_matrix,
+            prompt_len=prompt_len, max_seq_len=max_seq_len,
+            batch_size=batch_size, concurrency=concurrency,
+            runtime_reserve_mb=runtime_reserve_mb, phase=phase,
+            alpha=alpha, objective=objective,
+            max_subset_nodes=max_subset_nodes,
+        )
+        return assignments
+
+    @staticmethod
+    def plan_latency(
+        assignments: List[SliceAssignment],
+        objective: str = "sum",
+    ) -> float:
+        """
+        Scores a plan from its per-stage times t_s = compute + incoming comm:
+        "sum" for single-request TTFT, "bottleneck" for the pipeline's limiting stage.
+        """
+        if not assignments:
+            return 0.0
+        stage_times = [a.estimated_compute_ms + a.estimated_comm_ms for a in assignments]
+        return sum(stage_times) if objective == "sum" else max(stage_times)
 
     def sweep_alpha_sensitivity(
         self,
