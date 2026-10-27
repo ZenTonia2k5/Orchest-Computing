@@ -141,25 +141,15 @@ class HostOrchestrator:
         """
         Starts listening for LAN worker UDP beacons and broadcasting host configuration.
         """
-        if getattr(self, "_discovery_started", False) and self.discovery_service._running:
-            return
-        self._discovery_started = True
-
-        try:
-            self.discovery_service.stop()
-        except Exception:
-            pass
-        self.discovery_service = UDPDiscoveryService(port=self.discovery_service.port)
-
         def _on_beacon(beacon: NodeBeacon):
             node_metrics = beacon.node_metrics
             node_id = node_metrics.node_id
 
-            # Ignore beacons sent by the host machine itself (same node ID or same IP)
+            # Ignore beacons sent by the host machine itself (same node ID, local worker, or same IP)
             host_node = self.worker_nodes.get(self.node_id)
             host_ip = host_node.ip_address if host_node else None
 
-            if node_id == self.node_id:
+            if node_id in (self.node_id, "local_worker_edge"):
                 return
             if host_ip and (node_metrics.ip_address == host_ip or node_metrics.ip_address in ("127.0.0.1", "localhost")):
                 return
@@ -173,7 +163,7 @@ class HostOrchestrator:
 
             # Attach saved config (alias, enabled)
             cfg = self.node_configs.get(node_id, {})
-            setattr(node_metrics, "alias", cfg.get("alias", getattr(node_metrics, "hostname", node_id)))
+            setattr(node_metrics, "alias", cfg.get("alias", node_id))
             setattr(node_metrics, "enabled", cfg.get("enabled", True))
             setattr(node_metrics, "tcp_port", beacon.tcp_port)
 
@@ -195,7 +185,7 @@ class HostOrchestrator:
         def _host_beacon_loop():
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            while getattr(self, "_discovery_started", False) and self.discovery_service._running:
+            while self.discovery_service._running:
                 try:
                     payload = {
                         "type": "HOST_BEACON",
@@ -204,15 +194,7 @@ class HostOrchestrator:
                         "timestamp": time.time()
                     }
                     data = json.dumps(payload).encode("utf-8")
-                    targets = ["255.255.255.255", "<broadcast>", "127.0.0.1"]
-                    host_node = self.worker_nodes.get(self.node_id)
-                    h_ip = host_node.ip_address if host_node else None
-                    if h_ip and "." in h_ip and h_ip != "127.0.0.1":
-                        subnet_bcast = h_ip[:h_ip.rfind(".")] + ".255"
-                        if subnet_bcast not in targets:
-                            targets.append(subnet_bcast)
-
-                    for target_host in targets:
+                    for target_host in ("255.255.255.255", "<broadcast>", "127.0.0.1"):
                         try:
                             sock.sendto(data, (target_host, self.discovery_service.port))
                         except Exception:
@@ -239,7 +221,7 @@ class HostOrchestrator:
 
         remote_nodes = [
             n for nid, n in self.worker_nodes.items()
-            if nid != self.node_id
+            if nid not in (self.node_id, "local_worker_edge")
             and not (host_ip and (n.ip_address == host_ip or n.ip_address in ("127.0.0.1", "localhost")))
         ]
 
@@ -348,10 +330,5 @@ class HostOrchestrator:
         )
 
     def stop(self):
-        self._discovery_started = False
-        try:
-            self.discovery_service.stop()
-        except Exception:
-            pass
-        logger.info("Host Orchestrator discovery stopped.")
+        self.discovery_service.stop()
 

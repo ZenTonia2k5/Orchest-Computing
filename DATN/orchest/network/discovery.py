@@ -58,15 +58,7 @@ class UDPDiscoveryService:
                 try:
                     beacon = beacon_provider_fn()
                     data = beacon.to_json().encode("utf-8")
-                    targets = ["255.255.255.255", "<broadcast>", "127.0.0.1"]
-                    # Add directed subnet broadcast (e.g. 192.168.1.255) for routers that block 255.255.255.255
-                    node_ip = getattr(beacon.node_metrics, "ip_address", None)
-                    if node_ip and "." in node_ip and node_ip != "127.0.0.1":
-                        subnet_bcast = node_ip[:node_ip.rfind(".")] + ".255"
-                        if subnet_bcast not in targets:
-                            targets.append(subnet_bcast)
-
-                    for target_host in targets:
+                    for target_host in ("255.255.255.255", "<broadcast>", "127.0.0.1"):
                         try:
                             sock.sendto(data, (target_host, self.port))
                         except Exception:
