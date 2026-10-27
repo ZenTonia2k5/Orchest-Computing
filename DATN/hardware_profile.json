@@ -273,54 +273,54 @@
     },
     "mps": {
       "device_type": "mps",
-      "timestamp": "2026-10-27 15:22:02",
-      "calibrated_effective_tflops": 2.15,
+      "timestamp": "2026-10-27 15:53:18",
+      "calibrated_effective_tflops": 1.48,
       "benchmark_scores": {
-        "cpu_gflops": 30.81,
-        "gpu_gflops": 2153.77,
-        "npu_gflops": 983.88,
-        "all_gflops": 827.04
+        "cpu_gflops": 23.98,
+        "gpu_gflops": 1478.23,
+        "npu_gflops": 586.1,
+        "all_gflops": 655.53
       },
       "benchmark_statistics": {
         "cpu": {
-          "median": 30.81,
-          "mean": 30.81,
+          "median": 23.98,
+          "mean": 23.98,
           "std": 0.0,
-          "min": 30.81,
-          "max": 30.81,
-          "p95": 30.81,
-          "ci_lower": 30.81,
-          "ci_upper": 30.81
+          "min": 23.98,
+          "max": 23.98,
+          "p95": 23.98,
+          "ci_lower": 23.98,
+          "ci_upper": 23.98
         },
         "gpu": {
-          "median": 2153.77,
-          "mean": 2153.77,
+          "median": 1478.23,
+          "mean": 1478.23,
           "std": 0.0,
-          "min": 2153.77,
-          "max": 2153.77,
-          "p95": 2153.77,
-          "ci_lower": 2153.77,
-          "ci_upper": 2153.77
+          "min": 1478.23,
+          "max": 1478.23,
+          "p95": 1478.23,
+          "ci_lower": 1478.23,
+          "ci_upper": 1478.23
         },
         "npu": {
-          "median": 983.88,
-          "mean": 983.88,
+          "median": 586.1,
+          "mean": 586.1,
           "std": 0.0,
-          "min": 983.88,
-          "max": 983.88,
-          "p95": 983.88,
-          "ci_lower": 983.88,
-          "ci_upper": 983.88
+          "min": 586.1,
+          "max": 586.1,
+          "p95": 586.1,
+          "ci_lower": 586.1,
+          "ci_upper": 586.1
         },
         "all": {
-          "median": 827.04,
-          "mean": 827.04,
+          "median": 655.53,
+          "mean": 655.53,
           "std": 0.0,
-          "min": 827.04,
-          "max": 827.04,
-          "p95": 827.04,
-          "ci_lower": 827.04,
-          "ci_upper": 827.04
+          "min": 655.53,
+          "max": 655.53,
+          "p95": 655.53,
+          "ci_lower": 655.53,
+          "ci_upper": 655.53
         }
       }
     },
@@ -335,5 +335,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-27 15:46:38"
+  "last_cluster_sync": "2026-10-27 15:55:26"
 }
