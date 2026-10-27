@@ -105,6 +105,11 @@ class WorkerNode:
         self.discovery_service.stop()
         self.transport_server.stop()
         self.status = "OFFLINE"
+        try:
+            from orchest.models.cache_cleaner import cleanup_incomplete_downloads
+            cleanup_incomplete_downloads(remove_aborted_models=True)
+        except Exception:
+            pass
         logger.info("WorkerNode stopped.")
 
     def record_history_log(
@@ -270,6 +275,11 @@ class WorkerNode:
             except Exception as e:
                 logger.warning(f"Background model slice load notice: {e}")
                 self.status = "READY"
+                try:
+                    from orchest.models.cache_cleaner import cleanup_incomplete_downloads
+                    cleanup_incomplete_downloads(remove_aborted_models=True)
+                except Exception:
+                    pass
 
         threading.Thread(target=_bg_load, daemon=True).start()
 
