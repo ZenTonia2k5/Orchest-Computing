@@ -6,17 +6,17 @@
   "online_nodes": [
     {
       "node_id": "host_master",
-      "alias": "Host Master (Apple M2 GPU (Metal MPS))",
-      "device_type": "mps",
-      "accelerator": "Apple M2 GPU (Metal MPS)",
-      "estimated_tflops": 2.09,
-      "usable_memory_mb": 1272.6,
+      "alias": "Host Master (Intel(R) Core(TM) i7-14650HX (CPU Engine))",
+      "device_type": "cpu",
+      "accelerator": "Intel(R) Core(TM) i7-14650HX (CPU Engine)",
+      "estimated_tflops": 2.4,
+      "usable_memory_mb": 5924.64,
       "status": "ONLINE"
     }
   ],
   "device": "dynamic_online_cluster",
   "device_type": "cuda",
-  "timestamp": "2026-10-27 17:25:18",
+  "timestamp": "2026-10-28 10:58:07",
   "models": {
     "Qwen2.5-0.5B": [
       {
@@ -221,106 +221,106 @@
       }
     ]
   },
-  "calibrated_effective_tflops": 21.88,
+  "calibrated_effective_tflops": 22.97,
   "benchmark_scores": {
-    "cpu_gflops": 38.81,
-    "gpu_gflops": 18937.37,
-    "npu_gflops": 21877.95,
-    "all_gflops": 19541.02
+    "cpu_gflops": 38.45,
+    "gpu_gflops": 20227.74,
+    "npu_gflops": 22970.15,
+    "all_gflops": 20659.79
   },
   "benchmark_statistics": {
     "cpu": {
-      "median": 38.81,
-      "mean": 38.81,
+      "median": 38.45,
+      "mean": 38.45,
       "std": 0.0,
-      "min": 38.81,
-      "max": 38.81,
-      "p95": 38.81,
-      "ci_lower": 38.81,
-      "ci_upper": 38.81
+      "min": 38.45,
+      "max": 38.45,
+      "p95": 38.45,
+      "ci_lower": 38.45,
+      "ci_upper": 38.45
     },
     "gpu": {
-      "median": 18937.37,
-      "mean": 18937.37,
+      "median": 20227.74,
+      "mean": 20227.74,
       "std": 0.0,
-      "min": 18937.37,
-      "max": 18937.37,
-      "p95": 18937.37,
-      "ci_lower": 18937.37,
-      "ci_upper": 18937.37
+      "min": 20227.74,
+      "max": 20227.74,
+      "p95": 20227.74,
+      "ci_lower": 20227.74,
+      "ci_upper": 20227.74
     },
     "npu": {
-      "median": 21877.95,
-      "mean": 21877.95,
+      "median": 22970.15,
+      "mean": 22970.15,
       "std": 0.0,
-      "min": 21877.95,
-      "max": 21877.95,
-      "p95": 21877.95,
-      "ci_lower": 21877.95,
-      "ci_upper": 21877.95
+      "min": 22970.15,
+      "max": 22970.15,
+      "p95": 22970.15,
+      "ci_lower": 22970.15,
+      "ci_upper": 22970.15
     },
     "all": {
-      "median": 19541.02,
-      "mean": 19541.02,
+      "median": 20659.79,
+      "mean": 20659.79,
       "std": 0.0,
-      "min": 19541.02,
-      "max": 19541.02,
-      "p95": 19541.02,
-      "ci_lower": 19541.02,
-      "ci_upper": 19541.02
+      "min": 20659.79,
+      "max": 20659.79,
+      "p95": 20659.79,
+      "ci_lower": 20659.79,
+      "ci_upper": 20659.79
     }
   },
   "devices": {
     "cuda": {
       "device_type": "cuda",
-      "timestamp": "2026-10-27 17:25:18",
-      "calibrated_effective_tflops": 21.88,
+      "timestamp": "2026-10-28 10:58:07",
+      "calibrated_effective_tflops": 22.97,
       "benchmark_scores": {
-        "cpu_gflops": 38.81,
-        "gpu_gflops": 18937.37,
-        "npu_gflops": 21877.95,
-        "all_gflops": 19541.02
+        "cpu_gflops": 38.45,
+        "gpu_gflops": 20227.74,
+        "npu_gflops": 22970.15,
+        "all_gflops": 20659.79
       },
       "benchmark_statistics": {
         "cpu": {
-          "median": 38.81,
-          "mean": 38.81,
+          "median": 38.45,
+          "mean": 38.45,
           "std": 0.0,
-          "min": 38.81,
-          "max": 38.81,
-          "p95": 38.81,
-          "ci_lower": 38.81,
-          "ci_upper": 38.81
+          "min": 38.45,
+          "max": 38.45,
+          "p95": 38.45,
+          "ci_lower": 38.45,
+          "ci_upper": 38.45
         },
         "gpu": {
-          "median": 18937.37,
-          "mean": 18937.37,
+          "median": 20227.74,
+          "mean": 20227.74,
           "std": 0.0,
-          "min": 18937.37,
-          "max": 18937.37,
-          "p95": 18937.37,
-          "ci_lower": 18937.37,
-          "ci_upper": 18937.37
+          "min": 20227.74,
+          "max": 20227.74,
+          "p95": 20227.74,
+          "ci_lower": 20227.74,
+          "ci_upper": 20227.74
         },
         "npu": {
-          "median": 21877.95,
-          "mean": 21877.95,
+          "median": 22970.15,
+          "mean": 22970.15,
           "std": 0.0,
-          "min": 21877.95,
-          "max": 21877.95,
-          "p95": 21877.95,
-          "ci_lower": 21877.95,
-          "ci_upper": 21877.95
+          "min": 22970.15,
+          "max": 22970.15,
+          "p95": 22970.15,
+          "ci_lower": 22970.15,
+          "ci_upper": 22970.15
         },
         "all": {
-          "median": 19541.02,
-          "mean": 19541.02,
+          "median": 20659.79,
+          "mean": 20659.79,
           "std": 0.0,
-          "min": 19541.02,
-          "max": 19541.02,
-          "p95": 19541.02,
-          "ci_lower": 19541.02,
-          "ci_upper": 19541.02
+          "min": 20659.79,
+          "max": 20659.79,
+          "p95": 20659.79,
+          "ci_lower": 20659.79,
+          "ci_upper": 20659.79
         }
       }
     },
@@ -388,5 +388,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-28 10:22:46"
+  "last_cluster_sync": "2026-10-28 10:58:52"
 }
