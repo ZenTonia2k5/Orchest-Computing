@@ -51,10 +51,27 @@ def main():
     host_parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct")
     host_parser.add_argument("--transport", type=str, choices=["raw_tcp", "zmq", "grpc"], default="raw_tcp")
 
+    # orchest clean
+    clean_parser = subparsers.add_parser("clean", help="Clean incomplete or previous model downloads")
+    clean_parser.add_argument("--purge-all", action="store_true", help="Purge ALL cached models in HuggingFace cache")
+
     args = parser.parse_args()
 
     if args.command == "profile":
         cmd_profile(args)
+    elif args.command == "clean":
+        from orchest.models.cache_cleaner import cleanup_incomplete_downloads, purge_all_cached_models
+        if args.purge_all:
+            print("\n🧹 Purging ALL cached models from HuggingFace cache...")
+            reclaimed = purge_all_cached_models()
+            print(f"✅ Reclaimed {reclaimed / (1024*1024):.2f} MB ({reclaimed / (1024**3):.2f} GB).\n")
+        else:
+            print("\n🧹 Cleaning incomplete or interrupted model downloads...")
+            reclaimed = cleanup_incomplete_downloads(remove_aborted_models=True)
+            if reclaimed > 0:
+                print(f"✅ Reclaimed {reclaimed / (1024*1024):.2f} MB.\n")
+            else:
+                print("✨ Cache is clean. No broken/incomplete model files found.\n")
     elif args.command == "worker":
         from apps.worker_node import main as worker_main
         sys.argv = [sys.argv[0]] + ["--port", str(args.port), "--transport", args.transport]

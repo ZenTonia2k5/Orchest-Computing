@@ -57,9 +57,36 @@ class WorkerNode:
         self.status = "OFFLINE"
         self._is_running = False
 
+        # Connected Host Master tracking
+        self.connected_host_ip: Optional[str] = None
+        self.connected_host_id: Optional[str] = None
+        self.connected_host_port: int = 8000
+
         # Connection authorization & history logs
         self.pending_requests: List[Dict[str, Any]] = []
         self.connection_history: List[Dict[str, Any]] = []
+
+    def get_connected_host(self) -> Dict[str, Any]:
+        """Returns the currently connected host information."""
+        h_ip = self.connected_host_ip
+        h_id = self.connected_host_id
+        h_port = self.connected_host_port or 8000
+
+        if not h_ip:
+            for item in self.connection_history:
+                if item.get("status") == "ACCEPTED" and item.get("host_ip"):
+                    h_ip = item["host_ip"]
+                    h_id = item.get("host_id", "host_master")
+                    break
+
+        local_ip = self.profiler.profile().ip_address
+        is_remote = bool(h_ip and h_ip not in ("127.0.0.1", "localhost", local_ip))
+        return {
+            "host_id": h_id or "host_master",
+            "host_ip": h_ip or "127.0.0.1",
+            "dashboard_port": h_port,
+            "is_remote": is_remote,
+        }
 
     def start(self):
         if self._is_running and self.status != "OFFLINE":
@@ -72,11 +99,16 @@ class WorkerNode:
         self.transport_server.on_tensor_received_cb = self._on_message_received
         self.transport_server.start()
 
-        # Start listening for Host Beacons to auto-align transport mode (if listener enabled)
+        # Start listening for Host Beacons to auto-align transport mode and learn Host IP
         if self.enable_discovery_listener:
             def _on_host_beacon(payload):
                 new_transport = payload.get("transport", "raw_tcp")
                 self.switch_transport(new_transport)
+                h_ip = payload.get("host_ip")
+                if h_ip:
+                    self.connected_host_ip = h_ip
+                    self.connected_host_id = payload.get("host_id", "host_master")
+                    self.connected_host_port = payload.get("dashboard_port", 8000)
                 
             self.discovery_service.on_host_beacon_received = _on_host_beacon
             self.discovery_service.start_beacon_listener()
@@ -163,10 +195,14 @@ class WorkerNode:
         self.pending_requests = [r for r in self.pending_requests if r["id"] != req_id]
         meta = target_req["meta"]
 
+        self.connected_host_id = target_req.get("host_id", "host_master")
+        self.connected_host_ip = target_req.get("host_ip", "127.0.0.1")
+        self.connected_host_port = meta.get("dashboard_port", 8000)
+
         self.record_history_log(
             event_type="HOST_CONNECT",
-            host_id=target_req.get("host_id", "host_master"),
-            host_ip=target_req.get("host_ip", "127.0.0.1"),
+            host_id=self.connected_host_id,
+            host_ip=self.connected_host_ip,
             model_name=meta.get("model_name", "LLM"),
             details=f"Accepted Layers [{meta.get('layer_start')}..{meta.get('layer_end')}] of {meta.get('total_layers')}",
             status="ACCEPTED",
@@ -214,6 +250,11 @@ class WorkerNode:
         total_layers = meta.get("total_layers", 24)
         host_id = meta.get("host_id", "host_master")
         host_ip = meta.get("host_ip", "127.0.0.1")
+        dashboard_port = meta.get("dashboard_port", 8000)
+
+        self.connected_host_id = host_id
+        self.connected_host_ip = host_ip
+        self.connected_host_port = dashboard_port
 
         req_id = str(uuid.uuid4())[:8]
         req_obj = {

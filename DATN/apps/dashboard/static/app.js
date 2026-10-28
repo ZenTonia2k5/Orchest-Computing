@@ -1029,20 +1029,106 @@ document.addEventListener('DOMContentLoaded', () => {
         applyPartitionModel(true);
     });
 
-    // 7. Chat Box Prompting
+    // ---------------------------------------------------------
+    // 7. UNIFIED SHARED SWARM CHAT (Synchronized across Host & all Workers)
+    // ---------------------------------------------------------
     const chatInput = document.getElementById('chat-input-field');
     const btnSend = document.getElementById('btn-chat-send');
     const chatMessages = document.getElementById('chat-messages-container');
+    const btnClearChat = document.getElementById('btn-chat-clear');
+
+    const workerChatInput = document.getElementById('worker-chat-input-field');
+    const btnWorkerSend = document.getElementById('btn-worker-chat-send');
+    const workerChatMessages = document.getElementById('worker-chat-messages-container');
+    const btnWorkerClearChat = document.getElementById('btn-worker-chat-clear');
 
     let activeGenerationController = null;
     let activeStreamAnimInterval = null;
     let isGenerating = false;
+    let lastRenderedChatJson = '';
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function setChatButtonsState(generating) {
+        isGenerating = generating;
+        const sendBtns = [btnSend, btnWorkerSend].filter(Boolean);
+        sendBtns.forEach(btn => {
+            if (generating) {
+                btn.className = 'btn btn-chat-send btn-chat-stop';
+                btn.innerHTML = `<span>⏹</span> <span>Stop</span>`;
+            } else {
+                btn.className = 'btn btn-primary btn-chat-send';
+                btn.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    <span>Send</span>
+                `;
+            }
+        });
+    }
+
+    function renderSharedMessages(messages) {
+        if (!Array.isArray(messages)) return;
+        const jsonStr = JSON.stringify(messages);
+        if (jsonStr === lastRenderedChatJson && !isGenerating) return;
+        lastRenderedChatJson = jsonStr;
+
+        const containers = [chatMessages, workerChatMessages].filter(Boolean);
+        containers.forEach(container => {
+            container.innerHTML = '';
+            messages.forEach(msg => {
+                const el = document.createElement('div');
+                if (msg.role === 'system') {
+                    el.className = 'chat-msg system';
+                    el.innerHTML = msg.content;
+                } else if (msg.role === 'user') {
+                    el.className = 'chat-msg user';
+                    const senderLabel = msg.sender_name || (msg.sender_role === 'host' ? 'Host Master' : 'Worker Node');
+                    el.innerHTML = `
+                        <div class="chat-sender-tag" style="font-size: 0.72rem; opacity: 0.85; margin-bottom: 3px; font-weight: 600;">👤 ${escapeHtml(senderLabel)}</div>
+                        <div class="chat-body-content">${escapeHtml(msg.content)}</div>
+                    `;
+                } else {
+                    el.className = 'chat-msg assistant';
+                    el.innerHTML = `
+                        <div class="chat-sender-tag" style="font-size: 0.72rem; color: var(--accent-cyan); margin-bottom: 3px; font-weight: 600;">🤖 Swarm AI</div>
+                        <div class="chat-body-content">${(msg.content || '').replace(/\n/g, '<br>')}</div>
+                    `;
+                }
+                container.appendChild(el);
+            });
+            container.scrollTop = container.scrollHeight;
+        });
+    }
+
+    async function fetchSharedChatMessages() {
+        if (isGenerating) return;
+        try {
+            const res = await fetch('/api/chat/messages');
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.messages) {
+                    renderSharedMessages(data.messages);
+                }
+            }
+        } catch (e) {
+            // Server offline or starting up
+        }
+    }
 
     function abortActiveGeneration(reason = '⏹ Generation stopped.') {
         if (activeGenerationController) {
             try { activeGenerationController.abort(); } catch (e) {}
             activeGenerationController = null;
         }
+        fetch('/api/chat/stop', { method: 'POST' }).catch(() => {});
         fetch('/api/generate/stop', { method: 'POST' }).catch(() => {});
 
         if (activeStreamAnimInterval) {
@@ -1055,59 +1141,71 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusText = document.getElementById('pipeline-status-text');
         if (statusText) statusText.innerText = 'Pipeline Ready';
 
-        const lastAssistant = chatMessages?.querySelector('.chat-msg.assistant:last-child');
-        if (lastAssistant && lastAssistant.innerText.includes('Streaming tokens')) {
-            lastAssistant.innerHTML = `<span style="color: var(--accent-rose); font-style: italic;">${reason}</span>`;
-        }
+        const lastAssistants = [
+            chatMessages?.querySelector('.chat-msg.assistant:last-child .chat-body-content'),
+            workerChatMessages?.querySelector('.chat-msg.assistant:last-child .chat-body-content')
+        ].filter(Boolean);
 
-        isGenerating = false;
-        if (btnSend) {
-            btnSend.className = 'btn btn-primary btn-chat-send';
-            btnSend.innerHTML = `
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                <span>Send</span>
-            `;
-        }
+        lastAssistants.forEach(lastAsst => {
+            if (lastAsst.innerText.includes('Streaming tokens') || lastAsst.innerText.trim() === '') {
+                lastAsst.innerHTML = `<span style="color: var(--accent-rose); font-style: italic;">${reason}</span>`;
+            }
+        });
+
+        setChatButtonsState(false);
     }
 
-    async function sendChatPrompt() {
+    async function sendUnifiedChatPrompt(inputEl, senderRole = 'host') {
         if (isGenerating) {
             abortActiveGeneration('⏹ Generation stopped by user.');
             return;
         }
 
-        const text = chatInput.value.trim();
+        const text = (inputEl ? inputEl.value : '').trim();
         if (!text) return;
 
-        chatInput.value = '';
+        if (chatInput) chatInput.value = '';
+        if (workerChatInput) workerChatInput.value = '';
 
         if (!currentEngineEnabled) {
             currentEngineEnabled = true;
             fetchEngineStatus();
         }
 
-        isGenerating = true;
-        if (btnSend) {
-            btnSend.className = 'btn btn-chat-send btn-chat-stop';
-            btnSend.innerHTML = `<span>⏹</span> <span>Stop</span>`;
+        setChatButtonsState(true);
+
+        // Determine sender badge name
+        let senderName = 'Host Master';
+        if (senderRole === 'worker') {
+            const wHost = (window.__lastWorkerMetrics && window.__lastWorkerMetrics.hostname) || 'Worker';
+            senderName = `Worker Node (${wHost})`;
         }
 
-        const userMsg = document.createElement('div');
-        userMsg.className = 'chat-msg user';
-        userMsg.innerText = text;
-        chatMessages.appendChild(userMsg);
+        // Add user message to both containers
+        const containers = [chatMessages, workerChatMessages].filter(Boolean);
+        containers.forEach(c => {
+            const uMsg = document.createElement('div');
+            uMsg.className = 'chat-msg user';
+            uMsg.innerHTML = `
+                <div class="chat-sender-tag" style="font-size: 0.72rem; opacity: 0.85; margin-bottom: 3px; font-weight: 600;">👤 ${escapeHtml(senderName)}</div>
+                <div class="chat-body-content">${escapeHtml(text)}</div>
+            `;
+            c.appendChild(uMsg);
 
-        const assistantMsg = document.createElement('div');
-        assistantMsg.className = 'chat-msg assistant';
-        assistantMsg.innerText = 'Streaming tokens across LAN swarm pipeline...';
-        chatMessages.appendChild(assistantMsg);
+            const aMsg = document.createElement('div');
+            aMsg.className = 'chat-msg assistant';
+            aMsg.innerHTML = `
+                <div class="chat-sender-tag" style="font-size: 0.72rem; color: var(--accent-cyan); margin-bottom: 3px; font-weight: 600;">🤖 Swarm AI</div>
+                <div class="chat-body-content" style="color: var(--text-muted); font-style: italic;">Routing to Host Master for Swarm Inference...</div>
+            `;
+            c.appendChild(aMsg);
+            c.scrollTop = c.scrollHeight;
+        });
 
-        chatMessages.scrollTop = chatMessages.scrollHeight;
         const startTime = Date.now();
-
         const statusText = document.getElementById('pipeline-status-text');
         const numStages = (currentSlicePlan.length > 0) ? currentSlicePlan.length : (getEffectiveActiveNodes().length || 1);
-        if (statusText) statusText.innerText = `⚡ Token Stream Active across ${numStages} Nodes...`;
+        if (statusText) statusText.innerText = `⚡ Swarm Token Stream Active across ${numStages} Nodes...`;
 
         document.querySelectorAll('.connector-pulse').forEach(p => p.classList.add('animating'));
 
@@ -1132,10 +1230,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 60000);
 
         try {
-            const res = await fetch('/api/generate', {
+            const res = await fetch('/api/chat/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: text, max_tokens: maxTokens }),
+                body: JSON.stringify({
+                    prompt: text,
+                    max_tokens: maxTokens,
+                    sender_name: senderName,
+                    sender_role: senderRole
+                }),
                 signal: activeGenerationController.signal
             });
 
@@ -1169,16 +1272,32 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (parsed.token) {
                             if (!firstTokenReceived) {
                                 firstTokenReceived = true;
-                                assistantMsg.innerHTML = '';
+                                containers.forEach(c => {
+                                    const bodyEl = c.querySelector('.chat-msg.assistant:last-child .chat-body-content');
+                                    if (bodyEl) {
+                                        bodyEl.style.color = '';
+                                        bodyEl.style.fontStyle = '';
+                                        bodyEl.innerHTML = '';
+                                    }
+                                });
                             }
                             fullText += parsed.token;
                             tokenCount++;
-                            assistantMsg.innerHTML = fullText.replace(/\n/g, '<br>');
-                            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                            const formatted = fullText.replace(/\n/g, '<br>');
+                            containers.forEach(c => {
+                                const bodyEl = c.querySelector('.chat-msg.assistant:last-child .chat-body-content');
+                                if (bodyEl) bodyEl.innerHTML = formatted;
+                                c.scrollTop = c.scrollHeight;
+                            });
 
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
                             const tokSec = (tokenCount / (parseFloat(elapsed) || 0.1)).toFixed(1);
-                            document.getElementById('chat-speed').innerText = `${tokSec} tok/s | ${elapsed}s (${tokenCount} tokens)`;
+                            const speedText = `${tokSec} tok/s | ${elapsed}s (${tokenCount} tokens)`;
+                            const hostSpeed = document.getElementById('chat-speed');
+                            const workerSpeed = document.getElementById('worker-chat-speed');
+                            if (hostSpeed) hostSpeed.innerText = speedText;
+                            if (workerSpeed) workerSpeed.innerText = speedText;
                         }
                     } catch (e) {}
                 }
@@ -1186,14 +1305,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
             clearTimeout(timeoutId);
             if (!fullText) {
-                assistantMsg.innerText = 'Hello! I am Orchest Swarm AI. Ready for your prompt.';
+                containers.forEach(c => {
+                    const bodyEl = c.querySelector('.chat-msg.assistant:last-child .chat-body-content');
+                    if (bodyEl) bodyEl.innerText = 'Hello! I am Orchest Swarm AI. Ready for your prompt.';
+                });
             }
         } catch (err) {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
                 console.log('Inference aborted.');
             } else {
-                assistantMsg.innerText = 'Failed to communicate with Swarm Pipeline.';
+                containers.forEach(c => {
+                    const bodyEl = c.querySelector('.chat-msg.assistant:last-child .chat-body-content');
+                    if (bodyEl) bodyEl.innerHTML = `<span style="color: var(--accent-rose);">Failed to communicate with Swarm Host Master: ${escapeHtml(err.message)}</span>`;
+                });
             }
         } finally {
             clearTimeout(timeoutId);
@@ -1205,110 +1330,41 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.pipeline-node-card').forEach(card => card.classList.remove('active'));
             if (statusText) statusText.innerText = 'Pipeline Ready';
 
-            isGenerating = false;
+            setChatButtonsState(false);
             activeGenerationController = null;
-            if (btnSend) {
-                btnSend.className = 'btn btn-primary btn-chat-send';
-                btnSend.innerHTML = `
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                    <span>Send</span>
-                `;
-            }
+            // Refresh shared history
+            fetchSharedChatMessages();
         }
     }
 
-    btnSend.addEventListener('click', sendChatPrompt);
-    chatInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendChatPrompt();
-    });
-
-    // Worker Mode Chat Box Prompting (Worker -> Host Swarm Pipeline)
-    const workerChatInput = document.getElementById('worker-chat-input-field');
-    const btnWorkerSend = document.getElementById('btn-worker-chat-send');
-    const workerChatMessages = document.getElementById('worker-chat-messages-container');
-
-    async function sendWorkerChatPrompt() {
-        if (!workerChatInput) return;
-        const text = workerChatInput.value.trim();
-        if (!text) return;
-
-        workerChatInput.value = '';
-
-        const userMsg = document.createElement('div');
-        userMsg.className = 'chat-msg user';
-        userMsg.innerText = text;
-        workerChatMessages.appendChild(userMsg);
-
-        const assistantMsg = document.createElement('div');
-        assistantMsg.className = 'chat-msg assistant';
-        assistantMsg.innerText = 'Streaming tokens across LAN swarm pipeline...';
-        workerChatMessages.appendChild(assistantMsg);
-
-        workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
-        const startTime = Date.now();
-
+    async function clearSharedChat() {
         try {
-            const res = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: text, max_tokens: 64 })
-            });
-
-            if (!res.ok) {
-                throw new Error(`HTTP error! status: ${res.status}`);
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let fullText = '';
-            let tokenCount = 0;
-            let buffer = '';
-            let firstTokenReceived = false;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop();
-
-                for (const chunkLine of lines) {
-                    const trimmed = chunkLine.trim();
-                    if (!trimmed.startsWith('data: ')) continue;
-                    const dataStr = trimmed.slice(6).trim();
-                    if (dataStr === '[DONE]') break;
-
-                    try {
-                        const parsed = JSON.parse(dataStr);
-                        if (parsed.token) {
-                            if (!firstTokenReceived) {
-                                firstTokenReceived = true;
-                                assistantMsg.innerHTML = '';
-                            }
-                            fullText += parsed.token;
-                            tokenCount++;
-                            assistantMsg.innerHTML = fullText.replace(/\n/g, '<br>');
-                            workerChatMessages.scrollTop = workerChatMessages.scrollHeight;
-
-                            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                            const tokSec = (tokenCount / (parseFloat(elapsed) || 0.1)).toFixed(1);
-                            const speedEl = document.getElementById('worker-chat-speed');
-                            if (speedEl) speedEl.innerText = `${tokSec} tok/s | ${elapsed}s (${tokenCount} tokens)`;
-                        }
-                    } catch (e) {}
-                }
-            }
-        } catch (err) {
-            assistantMsg.innerText = 'Failed to communicate with Swarm Host Master: ' + err.message;
+            await fetch('/api/chat/clear', { method: 'POST' });
+            fetchSharedChatMessages();
+        } catch (e) {
+            console.error('Failed to clear chat:', e);
         }
+    }
+
+    if (btnSend && chatInput) {
+        btnSend.addEventListener('click', () => sendUnifiedChatPrompt(chatInput, 'host'));
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendUnifiedChatPrompt(chatInput, 'host');
+        });
     }
 
     if (btnWorkerSend && workerChatInput) {
-        btnWorkerSend.addEventListener('click', sendWorkerChatPrompt);
+        btnWorkerSend.addEventListener('click', () => sendUnifiedChatPrompt(workerChatInput, 'worker'));
         workerChatInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendWorkerChatPrompt();
+            if (e.key === 'Enter') sendUnifiedChatPrompt(workerChatInput, 'worker');
         });
+    }
+
+    if (btnClearChat) {
+        btnClearChat.addEventListener('click', clearSharedChat);
+    }
+    if (btnWorkerClearChat) {
+        btnWorkerClearChat.addEventListener('click', clearSharedChat);
     }
 
     // ---------------------------------------------------------
@@ -1463,6 +1519,26 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('worker-ip').innerText = data.ip_address;
             document.getElementById('worker-tcp-port').innerText = data.tcp_port;
             document.getElementById('worker-device').innerText = (data.gpus && data.gpus.length > 0) ? data.gpus[0].name : 'CPU Native';
+
+            window.__lastWorkerMetrics = data;
+
+            const hostBadge = document.getElementById('worker-connected-host-badge');
+            if (hostBadge && data.connected_host) {
+                const ch = data.connected_host;
+                if (ch.is_remote) {
+                    hostBadge.innerText = `Host: ${ch.host_ip}:${ch.dashboard_port}`;
+                    hostBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+                    hostBadge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+                    hostBadge.style.color = 'var(--accent-emerald)';
+                    hostBadge.title = `Forwarding questions to Host Master at ${ch.host_ip}:${ch.dashboard_port} for swarm pipeline inference`;
+                } else {
+                    hostBadge.innerText = 'Host: Local Master';
+                    hostBadge.style.background = 'rgba(59, 130, 246, 0.15)';
+                    hostBadge.style.borderColor = 'rgba(59, 130, 246, 0.35)';
+                    hostBadge.style.color = 'var(--accent-cyan)';
+                    hostBadge.title = 'Running Swarm Inference via local master engine';
+                }
+            }
 
             const isRunning = data.worker_status !== 'OFFLINE';
             if (workerPowerToggle) workerPowerToggle.checked = isRunning;
@@ -2560,11 +2636,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeView === 'worker') fetchWorkerMetrics();
         fetchHardwareBenchmark();
         fetchEngineStatus();
+        fetchSharedChatMessages();
     }, 2000);
 
     fetchCluster();
     fetchHardwareBenchmark();
     fetchEngineStatus();
+    fetchSharedChatMessages();
     setupDragAndDropSorting();
 });
 

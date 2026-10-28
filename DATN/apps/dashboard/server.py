@@ -11,10 +11,11 @@ import socket
 import asyncio
 import threading
 from typing import Dict, Any, Optional, List
+import requests
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 
 # Add root directory to sys.path
@@ -23,9 +24,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from orchest.executor.host import HostOrchestrator
 from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
-from orchest.models.cache_cleaner import cleanup_incomplete_downloads
+from orchest.models.cache_cleaner import cleanup_incomplete_downloads, purge_all_cached_models
 
 app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
+
+# Favicon handler to eliminate browser 404 console notices
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(content=b"", media_type="image/x-icon")
 
 # Serve static asset files (HTML, CSS, JS)
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -33,7 +39,35 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
-local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, auto_accept=True, enable_discovery_listener=False)
+local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, auto_accept=True, enable_discovery_listener=True)
+
+# Shared Swarm Chat Message Log (Authoritative on Host Master)
+SWARM_CHAT_MESSAGES: List[Dict[str, Any]] = [
+    {
+        "id": "welcome_msg",
+        "role": "system",
+        "sender_name": "Orchest Swarm",
+        "sender_role": "system",
+        "content": "👋 Welcome to <strong>Orchest Computing</strong>! Type a prompt in the chat box below to perform token-by-token swarm inference across connected LAN edge devices.",
+        "timestamp": time.strftime("%H:%M:%S"),
+        "streaming": False,
+    }
+]
+
+
+def get_remote_host_target(override_ip: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    If this node is operating as a Worker connected to a remote Host Master, returns
+    the host connection target {'host_ip': ..., 'port': ...}. Returns None if this node
+    is the Host Master.
+    """
+    if override_ip and override_ip not in ("127.0.0.1", "localhost"):
+        return {"host_ip": override_ip, "port": 8000}
+
+    conn = local_worker.get_connected_host()
+    if conn.get("is_remote"):
+        return {"host_ip": conn["host_ip"], "port": conn.get("dashboard_port", 8000)}
+    return None
 
 
 MODEL_CONFIGS = {
@@ -66,6 +100,21 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int = 1024
     temperature: float = 0.7
+    host_ip: Optional[str] = None
+
+
+class ChatSendRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 1024
+    temperature: float = 0.7
+    sender_name: Optional[str] = None
+    sender_role: str = "user"  # "host" or "worker"
+    host_ip: Optional[str] = None
+
+
+class SetHostRequest(BaseModel):
+    host_ip: str
+    port: Optional[int] = 8000
 
 
 class NodeUpdateRequest(BaseModel):
@@ -288,10 +337,18 @@ def get_worker_status():
     data["pending_requests"] = local_worker.pending_requests
     data["connection_history"] = local_worker.connection_history
     data["slice_info"] = local_worker.slice_info
+    data["connected_host"] = local_worker.get_connected_host()
     data["engine_status"] = SWARM_ENGINE_STATE["status"]
     data["engine_enabled"] = SWARM_ENGINE_STATE["enabled"]
     data["next_benchmark_countdown_sec"] = SWARM_ENGINE_STATE.get("next_benchmark_countdown_sec", 300)
     return data
+
+
+@app.post("/api/worker/set_host")
+def set_worker_host(req: SetHostRequest):
+    local_worker.connected_host_ip = req.host_ip
+    local_worker.connected_host_port = req.port or 8000
+    return {"status": "SUCCESS", "connected_host": local_worker.get_connected_host()}
 
 
 @app.post("/api/worker/toggle")
@@ -374,6 +431,23 @@ def trigger_partition(req: PartitionRequest):
 
 @app.post("/api/generate")
 def run_generation(req: GenerateRequest):
+    remote_host = get_remote_host_target(req.host_ip)
+    if remote_host:
+        try:
+            url = f"http://{remote_host['host_ip']}:{remote_host['port']}/api/generate"
+            proxy_resp = requests.post(url, json=req.model_dump(), stream=True, timeout=60)
+            def _proxy_gen_stream():
+                for line in proxy_resp.iter_lines():
+                    if line:
+                        yield line.decode("utf-8") + "\n\n"
+            return StreamingResponse(_proxy_gen_stream(), media_type="text/event-stream")
+        except Exception as e:
+            def _err_stream():
+                err = json.dumps({"token": f" (Error connecting to Host Master at {remote_host['host_ip']}: {e})"})
+                yield f"data: {err}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_err_stream(), media_type="text/event-stream")
+
     SWARM_ENGINE_STATE["enabled"] = True
     SWARM_ENGINE_STATE["status"] = "RUNNING"
     if not host_orchestrator.current_slice_plan:
@@ -398,11 +472,158 @@ def run_generation(req: GenerateRequest):
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
-
 @app.post("/api/generate/stop")
-def stop_generation():
+def stop_generation(host_ip: Optional[str] = None):
+    remote_host = get_remote_host_target(host_ip)
+    if remote_host:
+        try:
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/generate/stop", timeout=2.0)
+        except Exception:
+            pass
+        return {"status": "STOPPED", "message": "Inference generation was aborted on Host Master."}
+
     swarm_generator.request_stop()
     return {"status": "STOPPED", "message": "Inference generation was forcefully aborted."}
+
+
+# ---------------------------------------------------------
+# Unified Swarm Chat APIs (Shared Across Host & All Workers)
+# ---------------------------------------------------------
+
+@app.get("/api/chat/messages")
+def get_chat_messages(host_ip: Optional[str] = None):
+    remote_host = get_remote_host_target(host_ip)
+    if remote_host:
+        try:
+            url = f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/messages"
+            r = requests.get(url, timeout=2.5)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+    return {"status": "SUCCESS", "messages": SWARM_CHAT_MESSAGES}
+
+
+@app.post("/api/chat/send")
+def send_chat_message(req: ChatSendRequest):
+    remote_host = get_remote_host_target(req.host_ip)
+    if remote_host:
+        # Worker computer forwards prompt to Host Master to run Swarm Inference
+        try:
+            url = f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/send"
+            forward_payload = req.model_dump()
+            if not forward_payload.get("sender_name"):
+                metrics = local_worker.profiler.profile()
+                forward_payload["sender_name"] = f"Worker ({metrics.hostname or metrics.ip_address})"
+                forward_payload["sender_role"] = "worker"
+
+            proxy_resp = requests.post(url, json=forward_payload, stream=True, timeout=60)
+            def _proxy_stream():
+                for line in proxy_resp.iter_lines():
+                    if line:
+                        yield line.decode("utf-8") + "\n\n"
+            return StreamingResponse(_proxy_stream(), media_type="text/event-stream")
+        except Exception as e:
+            def _err_stream():
+                err_payload = json.dumps({"token": f" (Failed to reach Host Master at {remote_host['host_ip']}: {e})", "error": True})
+                yield f"data: {err_payload}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_err_stream(), media_type="text/event-stream")
+
+    # Host Master executes Swarm Inference and updates shared chat
+    SWARM_ENGINE_STATE["enabled"] = True
+    SWARM_ENGINE_STATE["status"] = "RUNNING"
+    if not host_orchestrator.current_slice_plan:
+        host_orchestrator.plan_model_slicing("Qwen/Qwen2.5-0.5B-Instruct")
+        host_orchestrator.deploy_slice_plan()
+
+    # Append User Message to Shared Log
+    user_msg_id = f"msg_{int(time.time()*1000)}_u"
+    sender_title = req.sender_name or ("Host Master" if req.sender_role == "host" else "Worker Node")
+    user_msg = {
+        "id": user_msg_id,
+        "role": "user",
+        "sender_name": sender_title,
+        "sender_role": req.sender_role,
+        "content": req.prompt,
+        "timestamp": time.strftime("%H:%M:%S"),
+        "streaming": False,
+    }
+    SWARM_CHAT_MESSAGES.append(user_msg)
+
+    # Append Assistant Placeholder to Shared Log
+    asst_msg_id = f"msg_{int(time.time()*1000)}_a"
+    asst_msg = {
+        "id": asst_msg_id,
+        "role": "assistant",
+        "sender_name": "Swarm AI",
+        "sender_role": "assistant",
+        "content": "",
+        "timestamp": time.strftime("%H:%M:%S"),
+        "streaming": True,
+    }
+    SWARM_CHAT_MESSAGES.append(asst_msg)
+
+    # Keep chat history size bounded to last 150 messages
+    if len(SWARM_CHAT_MESSAGES) > 150:
+        SWARM_CHAT_MESSAGES.pop(1)
+
+    def _chat_stream_generator():
+        try:
+            stream = swarm_generator.generate_stream(
+                prompt=req.prompt, max_new_tokens=req.max_tokens, temperature=req.temperature
+            )
+            accumulated_text = ""
+            for chunk in stream:
+                if chunk:
+                    accumulated_text += chunk
+                    asst_msg["content"] = accumulated_text
+                    payload = json.dumps({"token": chunk, "msg_id": asst_msg_id})
+                    yield f"data: {payload}\n\n"
+            asst_msg["streaming"] = False
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            asst_msg["streaming"] = False
+            asst_msg["content"] += f" (Error: {e})"
+            err_payload = json.dumps({"token": f" (Error: {e})", "msg_id": asst_msg_id, "error": True})
+            yield f"data: {err_payload}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_chat_stream_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/chat/stop")
+def stop_chat(host_ip: Optional[str] = None):
+    remote_host = get_remote_host_target(host_ip)
+    if remote_host:
+        try:
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/stop", timeout=2.0)
+        except Exception:
+            pass
+        return {"status": "STOPPED", "message": "Chat stopped on Host Master."}
+    swarm_generator.request_stop()
+    return {"status": "STOPPED", "message": "Chat stopped."}
+
+
+@app.post("/api/chat/clear")
+def clear_chat(host_ip: Optional[str] = None):
+    remote_host = get_remote_host_target(host_ip)
+    if remote_host:
+        try:
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/clear", timeout=2.0)
+        except Exception:
+            pass
+    SWARM_CHAT_MESSAGES.clear()
+    SWARM_CHAT_MESSAGES.append({
+        "id": "welcome_msg",
+        "role": "system",
+        "sender_name": "Orchest Swarm",
+        "sender_role": "system",
+        "content": "👋 Welcome to <strong>Orchest Computing</strong>! Type a prompt in the chat box below to perform token-by-token swarm inference across connected LAN edge devices.",
+        "timestamp": time.strftime("%H:%M:%S"),
+        "streaming": False,
+    })
+    return {"status": "SUCCESS"}
 
 
 
@@ -478,10 +699,14 @@ def on_app_shutdown():
 
 
 @app.post("/api/cache/clean")
-def clean_cache():
-    reclaimed = cleanup_incomplete_downloads(remove_aborted_models=True)
+def clean_cache(full_purge: bool = False):
+    if full_purge:
+        reclaimed = purge_all_cached_models()
+    else:
+        reclaimed = cleanup_incomplete_downloads(remove_aborted_models=True)
     return {
         "status": "SUCCESS",
+        "action": "FULL_PURGE" if full_purge else "INCOMPLETE_CLEANUP",
         "reclaimed_bytes": reclaimed,
         "reclaimed_mb": round(reclaimed / (1024 * 1024), 2),
     }
