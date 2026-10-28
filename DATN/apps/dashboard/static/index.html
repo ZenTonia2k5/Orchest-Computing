@@ -7,6 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Orchest Computing - Universal Swarm MLOps Platform</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2338bdf8' stroke-width='2.5'><polygon points='12 2 2 7 12 12 22 7 12 2'/><polyline points='2 17 12 22 22 17'/><polyline points='2 12 12 17 22 12'/></svg>">
     <link rel="stylesheet" href="/static/style.css?v=20260827_01">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -123,6 +124,7 @@
                                     <option value="1024" selected>1024 max tok</option>
                                 </select>
                                 <span class="chat-speed-tag" id="chat-speed">Stream Active</span>
+                                <button class="btn-chat-clear" id="btn-chat-clear" title="Clear Shared Chat History" style="background: rgba(255,255,255,0.05); border: 1px solid var(--panel-border); color: var(--text-muted); border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem; transition: all 0.2s;">🗑️ Clear</button>
                                 <button class="btn-card-toggle" data-toggle-target="card-chat" title="Collapse / Expand Section">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                 </button>
@@ -425,7 +427,9 @@
                                 <span id="worker-chat-active-model-title">Worker Swarm LLM Chat (Connected to Host Master)</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="connected-host-tag" id="worker-connected-host-badge" style="font-size: 0.75rem; padding: 3px 8px; border-radius: 6px; background: rgba(59, 130, 246, 0.15); color: var(--accent-cyan); border: 1px solid rgba(59, 130, 246, 0.3);">Host: Local Master</span>
                                 <span class="chat-speed-tag" id="worker-chat-speed">Stream Active</span>
+                                <button class="btn-chat-clear" id="btn-worker-chat-clear" title="Clear Shared Chat History" style="background: rgba(255,255,255,0.05); border: 1px solid var(--panel-border); color: var(--text-muted); border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem; transition: all 0.2s;">🗑️ Clear</button>
                                 <button class="btn-card-toggle" data-toggle-target="card-worker-chat" title="Collapse / Expand Section">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                 </button>

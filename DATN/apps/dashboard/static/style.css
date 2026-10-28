@@ -506,6 +506,22 @@ html, body {
     color: var(--text-main);
 }
 
+.chat-sender-tag {
+    letter-spacing: 0.2px;
+}
+
+.connected-host-tag {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.btn-chat-clear:hover {
+    background: rgba(239, 68, 68, 0.2) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #f87171 !important;
+}
+
 .chat-input-row {
     display: flex;
     gap: 10px;

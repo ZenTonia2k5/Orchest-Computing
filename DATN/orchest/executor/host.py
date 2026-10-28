@@ -187,16 +187,18 @@ class HostOrchestrator:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             while self.discovery_service._running:
                 try:
+                    host_node = self.worker_nodes.get(self.node_id)
+                    host_ip = host_node.ip_address if host_node else (getattr(self.discovery_service, "local_ip", None) or "127.0.0.1")
                     payload = {
                         "type": "HOST_BEACON",
                         "host_id": self.node_id,
+                        "host_ip": host_ip,
+                        "dashboard_port": 8000,
                         "transport": self.transport_type,
                         "timestamp": time.time()
                     }
                     data = json.dumps(payload).encode("utf-8")
                     targets = ["255.255.255.255", "<broadcast>", "127.0.0.1"]
-                    host_node = self.worker_nodes.get(self.node_id)
-                    host_ip = host_node.ip_address if host_node else None
                     if host_ip and "." in host_ip:
                         parts = host_ip.split(".")
                         if len(parts) == 4:
