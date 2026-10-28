@@ -39,9 +39,16 @@ class RawTCPTransportServer:
         self.ssl_context: Optional[ssl.SSLContext] = None
 
     def start(self):
+        if self._running and self._server_sock is not None:
+            return
         self._running = True
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            try:
+                self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except Exception:
+                pass
         self._server_sock.bind((self.host, self.port))
         self._server_sock.listen(128)
 
@@ -133,6 +140,13 @@ class RawTCPTransportServer:
                 self._server_sock.close()
             except Exception:
                 pass
+            self._server_sock = None
+        if self._thread and self._thread.is_alive():
+            try:
+                self._thread.join(timeout=1.0)
+            except Exception:
+                pass
+            self._thread = None
 
 
 class RawTCPTransportClient:
@@ -192,6 +206,8 @@ class ZMQTransportServer:
         ] = None
 
     def start(self):
+        if self._running and self._thread is not None and self._thread.is_alive():
+            return
         self._running = True
         def _loop():
             import zmq
@@ -237,6 +253,12 @@ class ZMQTransportServer:
 
     def stop(self):
         self._running = False
+        if self._thread and self._thread.is_alive():
+            try:
+                self._thread.join(timeout=1.5)
+            except Exception:
+                pass
+            self._thread = None
 
 
 class ZMQTransportClient:
@@ -316,6 +338,8 @@ class GRPCTransportServer:
         self._server = None
 
     def start(self):
+        if self._server is not None:
+            return
         import grpc
         from orchest.network import tensor_service_pb2_grpc as pb2_grpc
         self._server = grpc.server(
@@ -359,7 +383,11 @@ class GRPCTransportServer:
 
     def stop(self):
         if self._server:
-            self._server.stop(0)
+            try:
+                self._server.stop(0.5)
+            except Exception:
+                pass
+            self._server = None
 
 
 class GRPCTransportClient:

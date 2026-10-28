@@ -33,7 +33,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
-local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=True)
+local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=True, enable_discovery_listener=False)
 
 
 MODEL_CONFIGS = {
@@ -301,11 +301,20 @@ def toggle_worker(req: WorkerToggleRequest):
 
     if req.action == "start":
         if local_worker.status == "OFFLINE":
-            local_worker.start()
+            try:
+                local_worker.start()
+            except Exception as e:
+                logger.error(f"Failed to start local worker: {e}")
+                return {"status": "ERROR", "message": str(e), "worker_status": local_worker.status, "auto_accept": local_worker.auto_accept}
         return {"status": "SUCCESS", "worker_status": local_worker.status, "auto_accept": local_worker.auto_accept}
     elif req.action == "stop":
-        local_worker.stop()
+        try:
+            local_worker.stop()
+        except Exception as e:
+            logger.error(f"Failed to stop local worker: {e}")
         return {"status": "SUCCESS", "worker_status": "OFFLINE", "auto_accept": local_worker.auto_accept}
+    elif req.action == "update":
+        return {"status": "SUCCESS", "worker_status": local_worker.status, "auto_accept": local_worker.auto_accept}
     return {"status": "ERROR", "message": "Unknown action"}
 
 

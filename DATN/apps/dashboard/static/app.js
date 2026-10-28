@@ -1394,7 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
             await fetch('/api/worker/toggle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'start', auto_accept: e.target.checked })
+                body: JSON.stringify({ action: 'update', auto_accept: e.target.checked })
             });
         });
     }

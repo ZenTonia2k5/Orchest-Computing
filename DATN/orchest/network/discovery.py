@@ -48,6 +48,8 @@ class UDPDiscoveryService:
         """
         Starts background thread broadcasting NodeBeacon every interval_sec.
         """
+        if self._sender_thread and self._sender_thread.is_alive():
+            return
         self._running = True
 
         def _send_loop():
@@ -58,7 +60,14 @@ class UDPDiscoveryService:
                 try:
                     beacon = beacon_provider_fn()
                     data = beacon.to_json().encode("utf-8")
-                    for target_host in ("255.255.255.255", "<broadcast>", "127.0.0.1"):
+                    targets = ["255.255.255.255", "<broadcast>", "127.0.0.1"]
+                    ip = getattr(getattr(beacon, "node_metrics", None), "ip_address", None)
+                    if ip and "." in ip:
+                        parts = ip.split(".")
+                        if len(parts) == 4:
+                            targets.append(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
+
+                    for target_host in targets:
                         try:
                             sock.sendto(data, (target_host, self.port))
                         except Exception:
@@ -84,6 +93,8 @@ class UDPDiscoveryService:
         """
         Starts background thread listening for UDP beacons from worker nodes.
         """
+        if self._receiver_thread and self._receiver_thread.is_alive():
+            return
         self._running = True
 
         def _listen_loop():
@@ -139,4 +150,17 @@ class UDPDiscoveryService:
                 self._receiver_sock.close()
             except Exception:
                 pass
+            self._receiver_sock = None
+        if self._receiver_thread and self._receiver_thread.is_alive():
+            try:
+                self._receiver_thread.join(timeout=0.6)
+            except Exception:
+                pass
+            self._receiver_thread = None
+        if self._sender_thread and self._sender_thread.is_alive():
+            try:
+                self._sender_thread.join(timeout=0.6)
+            except Exception:
+                pass
+            self._sender_thread = None
 

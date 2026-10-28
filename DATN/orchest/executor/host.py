@@ -145,13 +145,8 @@ class HostOrchestrator:
             node_metrics = beacon.node_metrics
             node_id = node_metrics.node_id
 
-            # Ignore beacons sent by the host machine itself (same node ID, local worker, or same IP)
-            host_node = self.worker_nodes.get(self.node_id)
-            host_ip = host_node.ip_address if host_node else None
-
+            # Ignore beacons sent by the host machine itself (same node ID or local worker edge)
             if node_id in (self.node_id, "local_worker_edge"):
-                return
-            if host_ip and (node_metrics.ip_address == host_ip or node_metrics.ip_address in ("127.0.0.1", "localhost")):
                 return
 
             # Allowlist security check
@@ -194,7 +189,15 @@ class HostOrchestrator:
                         "timestamp": time.time()
                     }
                     data = json.dumps(payload).encode("utf-8")
-                    for target_host in ("255.255.255.255", "<broadcast>", "127.0.0.1"):
+                    targets = ["255.255.255.255", "<broadcast>", "127.0.0.1"]
+                    host_node = self.worker_nodes.get(self.node_id)
+                    host_ip = host_node.ip_address if host_node else None
+                    if host_ip and "." in host_ip:
+                        parts = host_ip.split(".")
+                        if len(parts) == 4:
+                            targets.append(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
+
+                    for target_host in targets:
                         try:
                             sock.sendto(data, (target_host, self.discovery_service.port))
                         except Exception:
@@ -216,13 +219,10 @@ class HostOrchestrator:
         self.fault_monitor.check_node_failures()
 
         host_node = self.worker_nodes.get(self.node_id)
-        host_ip = host_node.ip_address if host_node else None
-        host_hostname = socket.gethostname()
 
         remote_nodes = [
             n for nid, n in self.worker_nodes.items()
             if nid not in (self.node_id, "local_worker_edge")
-            and not (host_ip and (n.ip_address == host_ip or n.ip_address in ("127.0.0.1", "localhost")))
         ]
 
         if include_self and host_node:

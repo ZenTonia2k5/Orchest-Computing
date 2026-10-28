@@ -34,6 +34,7 @@ class WorkerNode:
         secret_key: Optional[bytes] = None,
         auto_accept: bool = True,
         transport_type: str = "raw_tcp",
+        enable_discovery_listener: bool = True,
     ):
         self.profiler = NodeProfiler(node_id=node_id)
         self.tcp_port = tcp_port
@@ -41,6 +42,7 @@ class WorkerNode:
         self.secret_key = secret_key
         self.auto_accept = auto_accept
         self.transport_type = transport_type
+        self.enable_discovery_listener = enable_discovery_listener
 
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.transport_server = TensorTransportServer(
@@ -52,25 +54,33 @@ class WorkerNode:
         self.slice_info: Optional[Dict[str, Any]] = None
         self.next_node_ip: Optional[str] = None
         self.next_node_port: Optional[int] = None
-        self.status = "IDLE"
+        self.status = "OFFLINE"
+        self._is_running = False
 
         # Connection authorization & history logs
         self.pending_requests: List[Dict[str, Any]] = []
         self.connection_history: List[Dict[str, Any]] = []
 
     def start(self):
+        if self._is_running and self.status != "OFFLINE":
+            logger.info(f"WorkerNode ID={self.profiler.node_id} is already running (status={self.status}).")
+            return
+
         logger.info(f"Starting WorkerNode ID={self.profiler.node_id} on TCP port {self.tcp_port}")
+        self.status = "IDLE"
+        self._is_running = True
         self.transport_server.on_tensor_received_cb = self._on_message_received
         self.transport_server.start()
 
-        # Start listening for Host Beacons to auto-align transport mode
-        def _on_host_beacon(payload):
-            new_transport = payload.get("transport", "raw_tcp")
-            self.switch_transport(new_transport)
-            
-        self.discovery_service.on_host_beacon_received = _on_host_beacon
-        self.discovery_service.start_beacon_listener()
-        logger.info("UDP Discovery beacon listener active (listening for Host configurations).")
+        # Start listening for Host Beacons to auto-align transport mode (if listener enabled)
+        if self.enable_discovery_listener:
+            def _on_host_beacon(payload):
+                new_transport = payload.get("transport", "raw_tcp")
+                self.switch_transport(new_transport)
+                
+            self.discovery_service.on_host_beacon_received = _on_host_beacon
+            self.discovery_service.start_beacon_listener()
+            logger.info("UDP Discovery beacon listener active (listening for Host configurations).")
 
         # Start UDP Auto-Discovery Beacon Sender
         def beacon_provider():
@@ -97,12 +107,14 @@ class WorkerNode:
                 host="0.0.0.0", port=self.tcp_port, secret_key=self.secret_key, transport_type=new_transport
             )
             self.transport_server.on_tensor_received_cb = self._on_message_received
-            self.transport_server.start()
-            logger.info(f"Worker transport server successfully re-bound to: {new_transport}")
+            if self._is_running:
+                self.transport_server.start()
+                logger.info(f"Worker transport server successfully re-bound to: {new_transport}")
         except Exception as e:
             logger.error(f"Failed to switch worker transport: {e}")
 
     def stop(self):
+        self._is_running = False
         self.discovery_service.stop()
         self.transport_server.stop()
         self.status = "OFFLINE"
