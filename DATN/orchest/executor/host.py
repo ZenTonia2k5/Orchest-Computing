@@ -145,8 +145,13 @@ class HostOrchestrator:
             node_metrics = beacon.node_metrics
             node_id = node_metrics.node_id
 
-            # Ignore beacons sent by the host machine itself (same node ID or local worker edge)
-            if node_id in (self.node_id, "local_worker_edge"):
+            # Ignore beacons sent by the host machine itself (same node ID or same IP on port 5555)
+            host_node = self.worker_nodes.get(self.node_id)
+            host_ip = host_node.ip_address if host_node else None
+
+            if node_id == self.node_id:
+                return
+            if host_ip and node_metrics.ip_address == host_ip and beacon.tcp_port == getattr(host_node, "tcp_port", 5555):
                 return
 
             # Allowlist security check
@@ -222,7 +227,7 @@ class HostOrchestrator:
 
         remote_nodes = [
             n for nid, n in self.worker_nodes.items()
-            if nid not in (self.node_id, "local_worker_edge")
+            if nid != self.node_id
         ]
 
         if include_self and host_node:

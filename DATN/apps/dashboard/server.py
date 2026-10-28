@@ -33,7 +33,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 host_orchestrator = HostOrchestrator()
 swarm_generator = SwarmAutoregressiveGenerator(host_orchestrator)
-local_worker = WorkerNode(node_id="local_worker_edge", tcp_port=5555, discovery_port=59001, auto_accept=True, enable_discovery_listener=False)
+local_worker = WorkerNode(node_id=None, tcp_port=5555, discovery_port=59001, auto_accept=True, enable_discovery_listener=False)
 
 
 MODEL_CONFIGS = {

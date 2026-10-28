@@ -1,9 +1,19 @@
 {
   "profile_type": "dynamic_edge_swarm",
   "description": "Orchest Computing Hardware Profile. Online nodes are dynamically synchronized at runtime.",
-  "cluster_status": "IDLE",
-  "online_nodes_count": 0,
-  "online_nodes": [],
+  "cluster_status": "ONLINE",
+  "online_nodes_count": 1,
+  "online_nodes": [
+    {
+      "node_id": "host_master",
+      "alias": "Host Master (Apple M2 GPU (Metal MPS))",
+      "device_type": "mps",
+      "accelerator": "Apple M2 GPU (Metal MPS)",
+      "estimated_tflops": 2.09,
+      "usable_memory_mb": 1272.6,
+      "status": "ONLINE"
+    }
+  ],
   "device": "dynamic_online_cluster",
   "device_type": "cuda",
   "timestamp": "2026-10-27 17:25:18",
@@ -316,54 +326,54 @@
     },
     "mps": {
       "device_type": "mps",
-      "timestamp": "2026-10-28 09:35:04",
-      "calibrated_effective_tflops": 1.24,
+      "timestamp": "2026-10-28 10:20:26",
+      "calibrated_effective_tflops": 2.09,
       "benchmark_scores": {
-        "cpu_gflops": 25.78,
-        "gpu_gflops": 1243.93,
-        "npu_gflops": 751.96,
-        "all_gflops": 673.93
+        "cpu_gflops": 11.03,
+        "gpu_gflops": 1878.9,
+        "npu_gflops": 1784.54,
+        "all_gflops": 2091.98
       },
       "benchmark_statistics": {
         "cpu": {
-          "median": 25.78,
-          "mean": 25.78,
+          "median": 11.03,
+          "mean": 11.03,
           "std": 0.0,
-          "min": 25.78,
-          "max": 25.78,
-          "p95": 25.78,
-          "ci_lower": 25.78,
-          "ci_upper": 25.78
+          "min": 11.03,
+          "max": 11.03,
+          "p95": 11.03,
+          "ci_lower": 11.03,
+          "ci_upper": 11.03
         },
         "gpu": {
-          "median": 1243.93,
-          "mean": 1243.93,
+          "median": 1878.9,
+          "mean": 1878.9,
           "std": 0.0,
-          "min": 1243.93,
-          "max": 1243.93,
-          "p95": 1243.93,
-          "ci_lower": 1243.93,
-          "ci_upper": 1243.93
+          "min": 1878.9,
+          "max": 1878.9,
+          "p95": 1878.9,
+          "ci_lower": 1878.9,
+          "ci_upper": 1878.9
         },
         "npu": {
-          "median": 751.96,
-          "mean": 751.96,
+          "median": 1784.54,
+          "mean": 1784.54,
           "std": 0.0,
-          "min": 751.96,
-          "max": 751.96,
-          "p95": 751.96,
-          "ci_lower": 751.96,
-          "ci_upper": 751.96
+          "min": 1784.54,
+          "max": 1784.54,
+          "p95": 1784.54,
+          "ci_lower": 1784.54,
+          "ci_upper": 1784.54
         },
         "all": {
-          "median": 673.93,
-          "mean": 673.93,
+          "median": 2091.98,
+          "mean": 2091.98,
           "std": 0.0,
-          "min": 673.93,
-          "max": 673.93,
-          "p95": 673.93,
-          "ci_lower": 673.93,
-          "ci_upper": 673.93
+          "min": 2091.98,
+          "max": 2091.98,
+          "p95": 2091.98,
+          "ci_lower": 2091.98,
+          "ci_upper": 2091.98
         }
       }
     },
@@ -378,5 +388,5 @@
       }
     }
   },
-  "last_cluster_sync": "2026-10-28 09:36:41"
+  "last_cluster_sync": "2026-10-28 10:22:46"
 }
