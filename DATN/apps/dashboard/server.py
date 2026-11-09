@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from orchest.executor.host import HostOrchestrator
 from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
-from orchest.models.cache_cleaner import cleanup_incomplete_downloads, purge_all_cached_models
+from orchest.models.cache_cleaner import cleanup_incomplete_downloads, purge_all_cached_models, setup_app_models_cache
+setup_app_models_cache()
 
 app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
 

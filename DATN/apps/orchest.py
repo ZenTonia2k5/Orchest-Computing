@@ -15,7 +15,10 @@ import uvicorn
 # Add root directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from orchest.models.cache_cleaner import cleanup_incomplete_downloads
+from orchest.models.cache_cleaner import cleanup_incomplete_downloads, setup_app_models_cache, get_app_models_dir
+
+# Route all model downloads to local app models directory
+setup_app_models_cache()
 
 
 def handle_exit_cleanup(*args):
@@ -32,6 +35,7 @@ def main():
     print("  🚀 ORCHEST COMPUTING: UNIVERSAL EDGE SWARM MLOPS PLATFORM")
     print("========================================================================")
     print("  Universal App Active: Host Master, Worker Node & Fleet Manager")
+    print(f"  Models Directory:     {get_app_models_dir()}")
     print("  Launching MLOps Web Dashboard at http://localhost:8000 ...")
     print("========================================================================\n")
 

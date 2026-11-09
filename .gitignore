@@ -83,5 +83,9 @@ benchmark_results.json
 *hardware_profile_local.json
 DATN/hardware_profile_local.json
 DATN/hardware_profile.json
-DATN/hardware_profile.json
-DATN/hardware_profile.json
+
+# Downloaded models cache
+/DATN/models/
+/models/
+!/DATN/orchest/models/
+*.safetensors

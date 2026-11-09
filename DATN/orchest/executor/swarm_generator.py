@@ -6,6 +6,8 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
 import threading
 
+from ..models.cache_cleaner import get_app_models_dir
+
 logger = logging.getLogger("SwarmGenerator")
 
 
@@ -42,20 +44,22 @@ class SwarmAutoregressiveGenerator:
             self.local_model = None
             self.tokenizer = None
 
+        models_cache_dir = get_app_models_dir()
         if self.tokenizer is None:
             try:
-                logger.info(f"Loading tokenizer for {model_name}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                logger.info(f"Loading tokenizer for {model_name} (cache: {models_cache_dir})...")
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=models_cache_dir, trust_remote_code=True)
             except Exception as e:
                 logger.warning(f"Tokenizer load notice: {e}")
 
         if self.local_model is None and self.tokenizer is not None:
             device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
             try:
-                logger.info(f"Loading weights for {model_name} into {device}...")
+                logger.info(f"Loading weights for {model_name} into {device} (cache: {models_cache_dir})...")
                 dtype = torch.float16 if device != "cpu" else torch.float32
                 self.local_model = AutoModelForCausalLM.from_pretrained(
                     model_name,
+                    cache_dir=models_cache_dir,
                     dtype=dtype,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True,

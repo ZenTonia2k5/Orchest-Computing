@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoConfig
 from .auto_slicer import AutoModelSlicer, ModelSliceModule
+from .cache_cleaner import get_app_models_dir
 
 
 class QwenModelSlicer:
@@ -12,9 +13,11 @@ class QwenModelSlicer:
 
     @staticmethod
     def load_model_and_inspect(model_name_or_path: str, device: str = "cpu"):
-        config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+        cache_dir = get_app_models_dir()
+        config = AutoConfig.from_pretrained(model_name_or_path, cache_dir=cache_dir, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
+            cache_dir=cache_dir,
             torch_dtype=torch.float16 if device != "cpu" else torch.float32,
             trust_remote_code=True,
             low_cpu_mem_usage=True,

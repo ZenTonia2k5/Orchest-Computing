@@ -8,6 +8,8 @@ from transformers import AutoModelForCausalLM, AutoConfig, PreTrainedModel
 from huggingface_hub import hf_hub_download
 import safetensors
 
+from .cache_cleaner import get_app_models_dir
+
 logger = logging.getLogger("AutoModelSlicer")
 
 
@@ -182,18 +184,19 @@ class AutoModelSlicer:
         if dtype is None:
             dtype = torch.float16 if device != "cpu" else torch.float32
 
-        logger.info(f"Targeting selective slice [{start_idx}..{end_idx}] of {total_layers} layers for {model_name}...")
+        models_cache_dir = get_app_models_dir()
+        logger.info(f"Targeting selective slice [{start_idx}..{end_idx}] of {total_layers} layers for {model_name} (cache: {models_cache_dir})...")
 
         # 1. Check if model has a sharded safetensors index
         weight_map = None
         try:
-            index_path = hf_hub_download(repo_id=model_name, filename="model.safetensors.index.json")
+            index_path = hf_hub_download(repo_id=model_name, filename="model.safetensors.index.json", cache_dir=models_cache_dir)
             with open(index_path, "r") as f:
                 index_data = json.load(f)
             weight_map = index_data.get("weight_map", {})
         except Exception:
             try:
-                index_path = hf_hub_download(repo_id=model_name, filename="pytorch_model.bin.index.json")
+                index_path = hf_hub_download(repo_id=model_name, filename="pytorch_model.bin.index.json", cache_dir=models_cache_dir)
                 with open(index_path, "r") as f:
                     index_data = json.load(f)
                 weight_map = index_data.get("weight_map", {})
@@ -223,11 +226,11 @@ class AutoModelSlicer:
             downloaded_files = []
             for shard in needed_shards:
                 logger.info(f"Downloading required shard for slice [{start_idx}..{end_idx}]: {shard}...")
-                shard_path = hf_hub_download(repo_id=model_name, filename=shard)
+                shard_path = hf_hub_download(repo_id=model_name, filename=shard, cache_dir=models_cache_dir)
                 downloaded_files.append(shard_path)
 
             # Initialize model architecture and load only needed tensors
-            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            config = AutoConfig.from_pretrained(model_name, cache_dir=models_cache_dir, trust_remote_code=True)
             model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, torch_dtype=dtype)
             
             # Load the downloaded shard weights
@@ -250,9 +253,10 @@ class AutoModelSlicer:
             return cls.create_slice(model=model, start_idx=start_idx, end_idx=end_idx, total_layers=total_layers, device=device)
 
         # 3. Fallback for un-sharded models (e.g. 0.5B < 1GB)
-        logger.info(f"Model {model_name} is single-file or non-sharded. Loading standard slice.")
+        logger.info(f"Model {model_name} is single-file or non-sharded. Loading standard slice from {models_cache_dir}.")
         full_model = AutoModelForCausalLM.from_pretrained(
             model_name,
+            cache_dir=models_cache_dir,
             torch_dtype=dtype,
             trust_remote_code=True,
             low_cpu_mem_usage=True,

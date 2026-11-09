@@ -7,6 +7,9 @@ import os
 # Add root directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from orchest.models.cache_cleaner import setup_app_models_cache
+setup_app_models_cache()
+
 from orchest.executor.worker import WorkerNode
 
 logging.basicConfig(
