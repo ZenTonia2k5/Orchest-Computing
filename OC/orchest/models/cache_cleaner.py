@@ -2,7 +2,9 @@ import os
 import shutil
 import glob
 import logging
-from typing import Optional, List
+import json
+import time
+from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger("orchest.cache_cleaner")
 
@@ -75,6 +77,274 @@ def _get_dir_size(path: str) -> int:
             except Exception:
                 pass
     return total_size
+
+
+def format_size(bytes_val: int) -> str:
+    """Formats bytes into human readable size string."""
+    if bytes_val >= 1024 ** 3:
+        return f"{bytes_val / (1024 ** 3):.2f} GB"
+    elif bytes_val >= 1024 ** 2:
+        return f"{bytes_val / (1024 ** 2):.1f} MB"
+    elif bytes_val >= 1024:
+        return f"{bytes_val / 1024:.1f} KB"
+    return f"{bytes_val} B"
+
+
+def list_installed_models(include_system_cache: bool = True) -> List[Dict[str, Any]]:
+    """
+    Scans the local app models directory (OC/models) and optional system HF cache
+    to detect all installed models and returns structured metadata:
+    - name: HuggingFace model repo id (e.g. 'Qwen/Qwen2.5-0.5B-Instruct')
+    - layers: number of transformer layers (e.g. 24)
+    - time: human-readable timestamp of when the model was downloaded/modified
+    - version: revision commit hash / version tag
+    - full_version: full revision commit hash
+    - size_bytes: total disk footprint in bytes
+    - size_str: human-readable size (e.g. '988.5 MB')
+    - dtype: torch dtype (e.g. 'bfloat16', 'float16')
+    - architecture: model architecture (e.g. 'Qwen2ForCausalLM')
+    - status: 'Ready' / 'Config Only' / 'Incomplete'
+    - location: 'App Models (OC/models)' or 'HuggingFace Cache (~/.cache)'
+    - is_app_cache: True if stored in app directory
+    - path: directory path
+    """
+    app_models_dir = get_app_models_dir()
+    app_hub_dir = os.path.join(app_models_dir, "hub")
+
+    search_dirs = [
+        (app_hub_dir, "App Models (OC/models)", True),
+        (app_models_dir, "App Models (OC/models)", True),
+    ]
+
+    if include_system_cache:
+        sys_cache = os.path.expanduser("~/.cache/huggingface/hub")
+        if os.path.exists(sys_cache):
+            search_dirs.append((sys_cache, "HuggingFace Cache (~/.cache)", False))
+
+    models: List[Dict[str, Any]] = []
+    seen_paths = set()
+    seen_names = set()
+
+    for sdir, loc_label, is_app in search_dirs:
+        if not os.path.exists(sdir):
+            continue
+
+        try:
+            entries = os.listdir(sdir)
+        except Exception:
+            continue
+
+        for entry in entries:
+            full_p = os.path.join(sdir, entry)
+            if not os.path.isdir(full_p) or full_p in seen_paths:
+                continue
+
+            # Case A: Standard HuggingFace hub model folder: models--<org>--<repo>
+            if entry.startswith("models--"):
+                seen_paths.add(full_p)
+                parts = entry.split("--")[1:]
+                model_name = "/".join(parts)
+
+                # Prioritize app cache over system cache if duplicate model
+                if model_name in seen_names and not is_app:
+                    continue
+                seen_names.add(model_name)
+
+                # Revision / commit hash from refs
+                version = None
+                refs_dir = os.path.join(full_p, "refs")
+                if os.path.exists(refs_dir):
+                    try:
+                        for rf in os.listdir(refs_dir):
+                            rf_p = os.path.join(refs_dir, rf)
+                            if os.path.isfile(rf_p):
+                                with open(rf_p, "r", encoding="utf-8") as f:
+                                    version = f.read().strip()
+                                    break
+                    except Exception:
+                        pass
+
+                snap_dir = os.path.join(full_p, "snapshots")
+                layers = None
+                arch = None
+                dtype = None
+                transformers_ver = None
+                hidden_size = None
+                intermediate_size = None
+                num_heads = None
+                num_kv_heads = None
+                vocab_size = None
+                mod_time = None
+                status = "Config Only"
+
+                if os.path.exists(snap_dir):
+                    try:
+                        snaps = [s for s in os.listdir(snap_dir) if not s.startswith(".")]
+                    except Exception:
+                        snaps = []
+                    if snaps:
+                        latest_snap = snaps[-1]
+                        if not version:
+                            version = latest_snap
+                        snap_p = os.path.join(snap_dir, latest_snap)
+                        if os.path.isdir(snap_p):
+                            try:
+                                mod_time = os.path.getmtime(snap_p)
+                            except Exception:
+                                pass
+                            cfg_file = os.path.join(snap_p, "config.json")
+                            if os.path.exists(cfg_file):
+                                try:
+                                    with open(cfg_file, "r", encoding="utf-8") as f:
+                                        cfg = json.load(f)
+                                    layers = cfg.get("num_hidden_layers") or cfg.get("n_layer") or cfg.get("num_layers")
+                                    arch = (cfg.get("architectures") or [None])[0] or cfg.get("model_type")
+                                    dtype = cfg.get("torch_dtype")
+                                    transformers_ver = cfg.get("transformers_version")
+                                    hidden_size = cfg.get("hidden_size")
+                                    intermediate_size = cfg.get("intermediate_size")
+                                    num_heads = cfg.get("num_attention_heads")
+                                    num_kv_heads = cfg.get("num_key_value_heads")
+                                    vocab_size = cfg.get("vocab_size")
+                                except Exception:
+                                    pass
+
+                            # Check for safetensors or bin weights
+                            try:
+                                for f in os.listdir(snap_p):
+                                    if f.endswith((".safetensors", ".bin", ".pt")):
+                                        tf = os.path.join(snap_p, f)
+                                        if os.path.exists(tf) and os.path.getsize(tf) > 0:
+                                            status = "Ready"
+                                            break
+                            except Exception:
+                                pass
+
+                # Check if incomplete
+                try:
+                    for root, _, files in os.walk(full_p):
+                        for f in files:
+                            if f.endswith((".incomplete", ".tmp")):
+                                status = "Incomplete"
+                                break
+                except Exception:
+                    pass
+
+                if not mod_time:
+                    try:
+                        mod_time = os.path.getmtime(full_p)
+                    except Exception:
+                        mod_time = time.time()
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mod_time))
+                sz = _get_dir_size(full_p)
+
+                models.append({
+                    "name": model_name,
+                    "layers": layers,
+                    "version": version[:8] if version else "N/A",
+                    "full_version": version or "N/A",
+                    "architecture": arch or "Transformer",
+                    "dtype": dtype or "N/A",
+                    "time": time_str,
+                    "size_bytes": sz,
+                    "size_str": format_size(sz),
+                    "status": status,
+                    "location": loc_label,
+                    "is_app_cache": is_app,
+                    "path": full_p,
+                    "hidden_size": hidden_size,
+                    "intermediate_size": intermediate_size,
+                    "num_heads": num_heads,
+                    "num_kv_heads": num_kv_heads,
+                    "vocab_size": vocab_size,
+                    "transformers_version": transformers_ver,
+                })
+
+            # Case B: Standalone model folder with config.json (e.g. custom or sliced model)
+            elif entry not in ("hub", ".locks", "models") and not entry.startswith("."):
+                cfg_file = os.path.join(full_p, "config.json")
+                if os.path.exists(cfg_file):
+                    seen_paths.add(full_p)
+                    model_name = entry
+                    if model_name in seen_names:
+                        continue
+                    seen_names.add(model_name)
+
+                    layers = None
+                    arch = None
+                    dtype = None
+                    try:
+                        with open(cfg_file, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                        layers = cfg.get("num_hidden_layers") or cfg.get("n_layer") or cfg.get("num_layers")
+                        arch = (cfg.get("architectures") or [None])[0] or cfg.get("model_type")
+                        dtype = cfg.get("torch_dtype")
+                    except Exception:
+                        pass
+
+                    status = "Config Only"
+                    try:
+                        for f in os.listdir(full_p):
+                            if f.endswith((".safetensors", ".bin", ".pt")):
+                                tf = os.path.join(full_p, f)
+                                if os.path.exists(tf) and os.path.getsize(tf) > 0:
+                                    status = "Ready"
+                                    break
+                    except Exception:
+                        pass
+
+                    try:
+                        mod_time = os.path.getmtime(full_p)
+                    except Exception:
+                        mod_time = time.time()
+                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mod_time))
+                    sz = _get_dir_size(full_p)
+
+                    models.append({
+                        "name": model_name,
+                        "layers": layers,
+                        "version": "local",
+                        "full_version": "local",
+                        "architecture": arch or "Transformer",
+                        "dtype": dtype or "N/A",
+                        "time": time_str,
+                        "size_bytes": sz,
+                        "size_str": format_size(sz),
+                        "status": status,
+                        "location": loc_label,
+                        "is_app_cache": is_app,
+                        "path": full_p,
+                    })
+
+    # Sort newest first
+    models.sort(key=lambda m: m.get("time", ""), reverse=True)
+    return models
+
+
+def delete_installed_model(model_path: str) -> Dict[str, Any]:
+    """Safely removes an installed model directory."""
+    if not os.path.exists(model_path):
+        return {"status": "ERROR", "message": "Model path not found"}
+
+    norm_path = os.path.abspath(model_path)
+    allowed_roots = [os.path.abspath(d) for d in _get_cache_dirs_to_clean()]
+    allowed_roots.append(os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub")))
+
+    is_allowed = any(norm_path.startswith(root) and norm_path != root for root in allowed_roots)
+    if not is_allowed:
+        return {"status": "ERROR", "message": "Path is outside allowed model cache directories"}
+
+    sz = _get_dir_size(norm_path)
+    try:
+        if os.path.isdir(norm_path):
+            shutil.rmtree(norm_path, ignore_errors=True)
+        else:
+            os.remove(norm_path)
+        logger.info(f"[CacheCleaner] Deleted model: {norm_path} ({format_size(sz)})")
+        return {"status": "SUCCESS", "reclaimed_bytes": sz, "reclaimed_str": format_size(sz)}
+    except Exception as e:
+        logger.warning(f"[CacheCleaner] Failed to delete model {norm_path}: {e}")
+        return {"status": "ERROR", "message": str(e)}
 
 
 def purge_all_cached_models() -> int:

@@ -24,7 +24,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from orchest.executor.host import HostOrchestrator
 from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
-from orchest.models.cache_cleaner import cleanup_incomplete_downloads, purge_all_cached_models, setup_app_models_cache
+from orchest.models.cache_cleaner import (
+    cleanup_incomplete_downloads,
+    purge_all_cached_models,
+    setup_app_models_cache,
+    list_installed_models,
+    delete_installed_model,
+    format_size,
+    get_app_models_dir,
+)
 setup_app_models_cache()
 
 app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
@@ -711,6 +719,55 @@ def clean_cache(full_purge: bool = False):
         "reclaimed_bytes": reclaimed,
         "reclaimed_mb": round(reclaimed / (1024 * 1024), 2),
     }
+
+
+@app.get("/api/models/installed")
+def get_installed_models(include_system_cache: bool = True):
+    """
+    Returns list of all models installed/cached with their metadata:
+    name, layers, time, version, size, architecture, status, etc.
+    """
+    models = list_installed_models(include_system_cache=include_system_cache)
+    for m in models:
+        name = m.get("name")
+        if name in MODEL_CONFIGS:
+            cfg = MODEL_CONFIGS[name]
+            if not m.get("layers"):
+                m["layers"] = cfg.get("num_layers")
+            if not m.get("params"):
+                m["params"] = cfg.get("params")
+            if not m.get("hidden_size"):
+                m["hidden_size"] = cfg.get("hidden_size")
+            if not m.get("intermediate_size"):
+                m["intermediate_size"] = cfg.get("intermediate_size")
+            if not m.get("num_heads"):
+                m["num_heads"] = cfg.get("num_heads")
+            if not m.get("num_kv_heads"):
+                m["num_kv_heads"] = cfg.get("num_kv_heads")
+
+    total_bytes = sum(m.get("size_bytes", 0) for m in models)
+    return {
+        "status": "SUCCESS",
+        "models_dir": get_app_models_dir(),
+        "total_models": len(models),
+        "total_size_bytes": total_bytes,
+        "total_size_str": format_size(total_bytes),
+        "models": models,
+    }
+
+
+class DeleteModelRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/models/delete")
+def delete_model_endpoint(req: DeleteModelRequest):
+    """Safely deletes an installed model from local disk cache."""
+    result = delete_installed_model(req.path)
+    if result.get("status") == "ERROR":
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
 
 
 

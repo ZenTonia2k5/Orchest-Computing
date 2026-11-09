@@ -2036,10 +2036,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnWorkerRefreshBench) btnWorkerRefreshBench.addEventListener('click', triggerBenchmarkRefresh);
 
     // ---------------------------------------------------------
-    // Modals: Prefill / Decode Breakdown & Node Detail Viewers
+    // Modals: Prefill / Decode Breakdown, Node Details, & Installed Models
     // ---------------------------------------------------------
     const modalPrefill = document.getElementById('modal-prefill-decode');
     const modalNode = document.getElementById('modal-node-detail');
+    const modalInstalled = document.getElementById('modal-installed-models');
 
     // Close Modal buttons
     ['btn-close-prefill-modal', 'btn-close-prefill-modal-footer'].forEach(id => {
@@ -2052,8 +2053,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btn) btn.addEventListener('click', () => { if (modalNode) modalNode.style.display = 'none'; });
     });
 
+    ['btn-close-installed-models', 'btn-close-installed-models-footer'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('click', () => { if (modalInstalled) modalInstalled.style.display = 'none'; });
+    });
+
     // Close modal on backdrop click
-    [modalPrefill, modalNode].forEach(m => {
+    [modalPrefill, modalNode, modalInstalled].forEach(m => {
         if (m) {
             m.addEventListener('click', (e) => {
                 if (e.target === m) m.style.display = 'none';
@@ -2276,6 +2282,250 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (modalNode) modalNode.style.display = 'flex';
     }
+
+    // ---------------------------------------------------------
+    // Installed AI Models Modal & Local Cache Management
+    // ---------------------------------------------------------
+    const btnShowInstalled = document.getElementById('btn-show-installed-models');
+    const btnHdrInstalled = document.getElementById('btn-hdr-installed-models');
+    const btnRefreshInstalled = document.getElementById('btn-refresh-installed-models');
+    const btnPurgeCache = document.getElementById('btn-purge-cache-quick');
+    const hdrCountBadge = document.getElementById('hdr-installed-models-count');
+    const statCount = document.getElementById('installed-stat-count');
+    const statSize = document.getElementById('installed-stat-size');
+    const statDir = document.getElementById('installed-stat-dir');
+    const installedList = document.getElementById('installed-models-list');
+    const cleanStatus = document.getElementById('cache-clean-status');
+
+    async function fetchInstalledModels(openModal = false) {
+        if (openModal && modalInstalled) {
+            modalInstalled.style.display = 'flex';
+            if (installedList) {
+                installedList.innerHTML = `
+                    <div class="installed-models-loading" style="text-align: center; padding: 36px; color: var(--text-muted);">
+                        <div style="font-size: 1.8rem; margin-bottom: 8px;">⏳</div>
+                        Scanning local cache for installed models...
+                    </div>
+                `;
+            }
+        }
+
+        try {
+            const resp = await fetch('/api/models/installed?include_system_cache=true');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            const models = data.models || [];
+            if (hdrCountBadge) {
+                hdrCountBadge.textContent = models.length;
+            }
+            if (statCount) statCount.textContent = models.length;
+            if (statSize) statSize.textContent = data.total_size_str || '0 MB';
+            if (statDir && data.models_dir) statDir.textContent = data.models_dir;
+            const pathElem = document.getElementById('installed-models-cache-path');
+            if (pathElem && data.models_dir) pathElem.textContent = data.models_dir;
+
+            if (openModal && installedList) {
+                renderInstalledModels(models, data.models_dir);
+            }
+        } catch (err) {
+            console.error('Failed to load installed models:', err);
+            if (openModal && installedList) {
+                installedList.innerHTML = `
+                    <div style="text-align: center; padding: 30px; color: var(--accent-rose);">
+                        Failed to load installed models: ${err.message}
+                    </div>
+                `;
+            }
+        }
+    }
+
+    function renderInstalledModels(models, baseDir) {
+        if (!installedList) return;
+        if (!models || models.length === 0) {
+            installedList.innerHTML = `
+                <div style="text-align: center; padding: 40px 20px; color: var(--text-muted); background: rgba(255,255,255,0.02); border-radius: 12px; border: 1px dashed rgba(255,255,255,0.1);">
+                    <div style="font-size: 2.2rem; margin-bottom: 10px;">📦</div>
+                    <h4 style="color: #fff; margin-bottom: 6px;">No Models Installed Yet</h4>
+                    <p style="font-size: 0.85rem; max-width: 480px; margin: 0 auto 16px;">
+                        No model weights found in <code>OC/models</code>. Select a model from the dropdown and start Swarm inference to download it locally into the app models cache.
+                    </p>
+                </div>
+            `;
+            return;
+        }
+
+        installedList.innerHTML = models.map(m => {
+            const statusClass = m.status === 'Ready' ? 'pill-status-ready' : (m.status === 'Config Only' ? 'pill-status-config' : 'pill-status-incomplete');
+            const statusIcon = m.status === 'Ready' ? '✅' : (m.status === 'Config Only' ? '📋' : '⚠️');
+
+            return `
+                <div class="installed-model-card" data-model-name="${m.name}">
+                    <div class="installed-model-header">
+                        <div class="installed-model-name-group">
+                            <div class="installed-model-icon">🧠</div>
+                            <div>
+                                <div class="installed-model-title">${m.name}</div>
+                                <div style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-mono);">
+                                    ${m.architecture} ${m.params ? `• ${m.params}` : ''} • ${m.location}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button class="btn-select-installed-model" data-select-name="${m.name}" title="Select this model for Swarm Partitioning">
+                                Use Model 🎯
+                            </button>
+                            <button class="btn-delete-installed-model" data-delete-path="${m.path}" data-delete-name="${m.name}" title="Delete model files from disk">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="installed-model-meta-pills">
+                        <span class="model-pill pill-layers">
+                            <span>🔢</span>
+                            <span>${m.layers ? `${m.layers} Layers` : 'Unknown Layers'}</span>
+                        </span>
+                        <span class="model-pill pill-version" title="Revision / Version: ${m.full_version}">
+                            <span>🔖</span>
+                            <span>v:${m.version}</span>
+                        </span>
+                        <span class="model-pill pill-time" title="Installation / Modified Timestamp">
+                            <span>🕒</span>
+                            <span>${m.time}</span>
+                        </span>
+                        <span class="model-pill pill-size" title="Disk Space Footprint">
+                            <span>💾</span>
+                            <span>${m.size_str}</span>
+                        </span>
+                        ${m.dtype && m.dtype !== 'N/A' ? `
+                            <span class="model-pill" title="Precision / Weight Data Type">
+                                <span>⚖️</span>
+                                <span>${m.dtype}</span>
+                            </span>
+                        ` : ''}
+                        <span class="model-pill ${statusClass}" title="Model Status">
+                            <span>${statusIcon}</span>
+                            <span>${m.status}</span>
+                        </span>
+                    </div>
+
+                    <div class="installed-model-footer">
+                        <span style="font-family: var(--font-mono); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 650px;" title="${m.path}">
+                            📁 ${m.path}
+                        </span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Attach Select buttons
+        installedList.querySelectorAll('.btn-select-installed-model').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const modelName = btn.getAttribute('data-select-name');
+                if (modelName) {
+                    const sel = document.getElementById('model-selector');
+                    if (sel) {
+                        let exists = false;
+                        for (let opt of sel.options) {
+                            if (opt.value === modelName) {
+                                sel.value = modelName;
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) {
+                            const newOpt = document.createElement('option');
+                            newOpt.value = modelName;
+                            newOpt.textContent = `${modelName} (Custom Installed)`;
+                            sel.appendChild(newOpt);
+                            sel.value = modelName;
+                        }
+                        sel.dispatchEvent(new Event('change'));
+                    }
+                    if (modalInstalled) modalInstalled.style.display = 'none';
+                    if (typeof showToast === 'function') {
+                        showToast(`Selected model: ${modelName}`, 'success');
+                    }
+                }
+            });
+        });
+
+        // Attach Delete buttons
+        installedList.querySelectorAll('.btn-delete-installed-model').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const modelPath = btn.getAttribute('data-delete-path');
+                const modelName = btn.getAttribute('data-delete-name');
+                if (!modelPath) return;
+
+                if (!confirm(`Are you sure you want to delete model "${modelName}" from disk? This will reclaim disk space.`)) {
+                    return;
+                }
+
+                try {
+                    btn.disabled = true;
+                    btn.textContent = '⏳';
+                    const resp = await fetch('/api/models/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: modelPath })
+                    });
+                    const res = await resp.json();
+                    if (resp.ok && res.status === 'SUCCESS') {
+                        if (typeof showToast === 'function') {
+                            showToast(`Deleted ${modelName} (Reclaimed ${res.reclaimed_str})`, 'success');
+                        }
+                        fetchInstalledModels(true);
+                    } else {
+                        if (typeof showToast === 'function') {
+                            showToast(`Failed to delete model: ${res.detail || res.message}`, 'error');
+                        }
+                        btn.disabled = false;
+                        btn.textContent = '🗑️';
+                    }
+                } catch (err) {
+                    if (typeof showToast === 'function') {
+                        showToast(`Error deleting model: ${err.message}`, 'error');
+                    }
+                    btn.disabled = false;
+                    btn.textContent = '🗑️';
+                }
+            });
+        });
+    }
+
+    if (btnShowInstalled) {
+        btnShowInstalled.addEventListener('click', () => fetchInstalledModels(true));
+    }
+    if (btnHdrInstalled) {
+        btnHdrInstalled.addEventListener('click', () => fetchInstalledModels(true));
+    }
+    if (btnRefreshInstalled) {
+        btnRefreshInstalled.addEventListener('click', () => fetchInstalledModels(true));
+    }
+    if (btnPurgeCache) {
+        btnPurgeCache.addEventListener('click', async () => {
+            if (cleanStatus) cleanStatus.textContent = 'Cleaning temp files...';
+            try {
+                const resp = await fetch('/api/cache/clean', { method: 'POST' });
+                const d = await resp.json();
+                if (cleanStatus) cleanStatus.textContent = `Cleaned ${d.reclaimed_mb} MB`;
+                if (typeof showToast === 'function') {
+                    showToast(`Cleaned temporary downloads (${d.reclaimed_mb} MB reclaimed)`, 'success');
+                }
+                setTimeout(() => { if (cleanStatus) cleanStatus.textContent = ''; }, 3000);
+                fetchInstalledModels(true);
+            } catch (e) {
+                if (cleanStatus) cleanStatus.textContent = 'Failed';
+                if (typeof showToast === 'function') {
+                    showToast(`Failed to clean temp cache: ${e.message}`, 'error');
+                }
+            }
+        });
+    }
+
+    // Initial silent scan to update count badge
+    fetchInstalledModels(false);
 
     // ---------------------------------------------------------
     // Swarm Inference Engine Power Switch & Periodic Benchmark Handler

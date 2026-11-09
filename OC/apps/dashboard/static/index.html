@@ -49,6 +49,11 @@
             </div>
 
             <div class="header-status">
+                <button class="btn-installed-models-hdr" id="btn-hdr-installed-models" title="View Installed Models (Name, Layers, Version, Time, Size)">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    <span>Installed Models</span>
+                    <span class="installed-models-count-badge" id="hdr-installed-models-count">0</span>
+                </button>
                 <span class="status-badge" id="header-status-badge">Scanning LAN...</span>
             </div>
         </header>
@@ -194,7 +199,12 @@
                             <div class="control-row">
                                 <!-- MODEL OPTION SELECTOR -->
                                 <div class="control-item">
-                                    <label for="model-selector">AI Model Option:</label>
+                                    <div class="control-label-row">
+                                        <label for="model-selector">AI Model Option:</label>
+                                        <button type="button" class="btn-subtle-badge" id="btn-show-installed-models" title="Click to view all downloaded and installed models">
+                                            📦 Installed Models
+                                        </button>
+                                    </div>
                                     <select id="model-selector" class="custom-select">
                                         <option value="Qwen/Qwen2.5-0.5B-Instruct" selected>Qwen2.5-0.5B-Instruct (Lightweight / Fast - 24 Layers)</option>
                                         <option value="Qwen/Qwen2.5-1.5B-Instruct">Qwen2.5-1.5B-Instruct (Balanced Edge - 28 Layers)</option>
@@ -867,6 +877,62 @@
 
             <div class="modal-body" id="node-modal-body">
                 <!-- Dynamically populated per node clicked -->
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: INSTALLED MODELS IN LOCAL DISK CACHE -->
+    <div class="modal-backdrop" id="modal-installed-models" style="display: none;">
+        <div class="modal-dialog glass-panel" style="max-width: 920px;">
+            <div class="modal-header">
+                <div class="modal-title-box">
+                    <div class="modal-icon">📦</div>
+                    <div>
+                        <h3>Installed AI Models</h3>
+                        <span class="modal-subtitle">Models downloaded and cached in <code id="installed-models-cache-path">OC/models</code></span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <button class="btn btn-sm btn-secondary" id="btn-refresh-installed-models" title="Rescan local cache">
+                        🔄 Refresh
+                    </button>
+                    <button class="btn-close-modal" id="btn-close-installed-models">✕</button>
+                </div>
+            </div>
+
+            <div class="modal-body" style="padding: 20px;">
+                <!-- Summary bar -->
+                <div class="installed-summary-bar">
+                    <div class="installed-summary-stat">
+                        <span class="stat-title">Total Installed</span>
+                        <span class="stat-number" id="installed-stat-count">0</span>
+                    </div>
+                    <div class="installed-summary-stat">
+                        <span class="stat-title">Total Disk Space</span>
+                        <span class="stat-number" id="installed-stat-size">0 MB</span>
+                    </div>
+                    <div class="installed-summary-stat">
+                        <span class="stat-title">Storage Directory</span>
+                        <span class="stat-desc" id="installed-stat-dir">OC/models</span>
+                    </div>
+                </div>
+
+                <!-- Models list container -->
+                <div class="installed-models-container" id="installed-models-list">
+                    <div class="installed-models-loading" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                        Loading installed models...
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="btn btn-sm btn-danger-outline" id="btn-purge-cache-quick" title="Clean incomplete / temporary downloads">
+                        🧹 Clean Temp Blobs
+                    </button>
+                    <span id="cache-clean-status" style="font-size: 0.8rem; color: var(--text-muted);"></span>
+                </div>
+                <button class="btn btn-secondary" id="btn-close-installed-models-footer">Close</button>
             </div>
         </div>
     </div>
