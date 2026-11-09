@@ -153,7 +153,7 @@ class DynamicPartitioner:
                         dp[s][i] = total_cost
                         parent[s][i] = k - 1
 
-        # Pick stage count that minimizes end-to-end latency
+        # Select best stage count: P* = argmin_{kappa} DP[kappa][L]
         best_stage = -1
         min_total_cost = float("inf")
         for s in range(K):
@@ -919,7 +919,8 @@ class DynamicPartitioner:
         **kwargs
     ) -> Dict[float, Dict[str, Any]]:
         """
-        Evaluates partition feasibility and latency across different memory safety thresholds (alpha).
+        Evaluates partition feasibility and latency across memory thresholds:
+        checks M_stage <= alpha * M_usable for alpha in {0.80, 0.85, 0.90, 0.95}.
         """
         alphas = alphas or [0.80, 0.85, 0.90, 0.95]
         results = {}

@@ -31,7 +31,10 @@ class ModelArchitectureSpec:
 
 @dataclass
 class TransientMemoryProfile:
-    """Breakdown of peak transient activation memory and backend workspace."""
+    """
+    Breakdown of transient activation memory and backend execution workspace:
+    M_transient = M_activation + M_workspace + M_transport
+    """
     total_transient_mb: float
     activation_transient_mb: float
     backend_workspace_mb: float
@@ -47,7 +50,11 @@ class TransientMemoryProfile:
 
 @dataclass
 class StageMemoryFootprint:
-    """Memory breakdown and feasibility calculation for a pipeline stage on a node."""
+    """
+    Memory footprint for a pipeline stage on a node:
+    M_stage = M_weights + M_kv_cache + M_transient + M_transport + M_runtime + M_allocator
+    Feasibility condition: M_stage <= alpha * M_usable
+    """
     weights_mb: float
     kv_cache_mb: float
     transient_activation_mb: float
@@ -274,7 +281,10 @@ class PartitionCostCalculator:
         precision: Union[str, int, float] = "fp16",
         include_norm_biases: bool = True,
     ) -> float:
-        """Estimates total weight memory footprint in MB for a segment of transformer layers."""
+        """
+        Estimates total weight memory footprint in MB for a segment of layers:
+        M_weights = (num_layers * params_per_layer * bytes_per_param) / 1024^2
+        """
         h = max(hidden_size, 1)
         inter = intermediate_size if intermediate_size is not None else int(h * 8 / 3)
         effective_kv_heads = num_kv_heads if (num_kv_heads is not None and num_kv_heads > 0) else num_heads
@@ -334,7 +344,10 @@ class PartitionCostCalculator:
         runtime_reserve_mb: float = 0.0,
         apply_system_defaults: bool = False,
     ) -> float:
-        """Calculates usable device memory after reserving headroom for OS and runtime overhead."""
+        """
+        Calculates usable device memory after reserving headroom:
+        M_usable = max(M_available - M_os_reserve - M_runtime_reserve, 0)
+        """
         raw_avail = cls.get_node_available_memory_mb(node)
 
         # Determine OS reserve
@@ -478,7 +491,10 @@ class PartitionCostCalculator:
         intermediate_size: Optional[int] = None,
         apply_system_defaults: bool = False,
     ) -> StageMemoryFootprint:
-        """Calculates total stage memory footprint including weights, activations, KV cache, and workspace."""
+        """
+        Calculates total stage memory footprint:
+        M_stage = M_weights + M_kv_cache + M_transient + M_workspace + M_transport + M_runtime + M_allocator
+        """
         sub_layers = layers[start_idx : end_idx + 1]
         n_sub = len(sub_layers)
         n_total = total_layers or len(layers)
@@ -943,7 +959,10 @@ class PartitionCostCalculator:
         include_transport_buffers: bool = True,
         use_flash_attention: bool = True,
     ) -> TransientMemoryProfile:
-        """Estimates peak transient activation memory and backend execution workspace."""
+        """
+        Estimates peak transient activation memory and backend execution workspace:
+        M_transient = max(MLP_peak, Attn_peak) + Residual_buffer + Workspace
+        """
         b = max(batch_size, 1)
         s = max(seq_len, 1)
         h = max(hidden_size, 1)
@@ -1069,7 +1088,10 @@ class PartitionCostCalculator:
         concurrency: int = 1,
         dtype_bytes: Union[int, float] = 2,
     ) -> float:
-        """Calculates dynamic KV cache memory footprint in MB, supporting GQA when num_kv_heads is specified."""
+        """
+        Calculates dynamic GQA-aware KV Cache memory footprint in MB:
+        M_kv = 2 * num_layers * concurrency * num_kv_heads * head_dim * max_seq_len * batch_size * bytes
+        """
         head_dim = hidden_size // max(num_heads, 1)
         effective_kv_heads = num_kv_heads if (num_kv_heads is not None and num_kv_heads > 0) else num_heads
         total_elements = 2 * num_layers * max(concurrency, 1) * effective_kv_heads * head_dim * max_seq_len * max(batch_size, 1)
@@ -1115,7 +1137,10 @@ class PartitionCostCalculator:
         include_backend_workspace: bool = True,
         cached_weights_mb: Optional[float] = None,
     ) -> float:
-        """Calculates total working set memory for layers [start_idx : end_idx]."""
+        """
+        Calculates total model working set for layers [start_idx..end_idx]:
+        M_working = M_weights + M_transient + M_kv_cache + M_runtime_reserve
+        """
         sub_layers = layers[start_idx : end_idx + 1]
         if not sub_layers:
             return 0.0

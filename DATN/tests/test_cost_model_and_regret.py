@@ -146,9 +146,9 @@ def test_heuristic_baselines_and_oracle_regret():
 
 def test_gqa_aware_kv_cache():
     """
-    Verifies GQA-aware KV Cache estimation:
-    num_kv_heads=4 (Qwen2.5-7B style) should be significantly lower
-    than standard MHA with num_heads=28.
+    Verifies GQA-aware KV cache scaling:
+    M_kv = 2 * L * C * H_kv * d_k * S * B * bytes.
+    Using num_kv_heads=4 vs num_heads=28 should yield 1/7 memory footprint.
     """
     mha_kv_mb = PartitionCostCalculator.estimate_kv_cache_mb(
         num_layers=28, hidden_size=3584, num_heads=28, num_kv_heads=28, max_seq_len=2048, batch_size=1
@@ -165,7 +165,8 @@ def test_gqa_aware_kv_cache():
 
 def test_alpha_safety_ceiling_sensitivity():
     """
-    Verifies sweep over memory safety ceiling alpha in {0.80, 0.85, 0.90, 0.95}.
+    Verifies sensitivity sweep over memory safety ceiling alpha in {0.80, 0.85, 0.90, 0.95}:
+    M_stage <= alpha * M_usable.
     """
     nodes = create_test_heterogeneous_cluster()
     layers = ModelProfiler.profile_transformer_layers(
