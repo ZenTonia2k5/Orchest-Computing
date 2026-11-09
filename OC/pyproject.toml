@@ -9,7 +9,7 @@ description = "Decentralized MLOps Orchestrator for Heterogeneous Edge Devices (
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    { name = "HCMUT DATN Team" }
+    { name = "HCMUT Team" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -24,10 +24,10 @@ SHARED_PROFILE_NAME = "hardware_profile.json"
 
 
 def find_profile_path(filename: str) -> Optional[str]:
-    """Finds existing profile path looking in current dir or DATN/ subdir."""
+    """Finds existing profile path looking in current dir or OC/ subdir."""
     candidates = [
         filename,
-        os.path.join("DATN", filename),
+        os.path.join("OC", filename),
         os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), filename),
     ]
     for p in candidates:
@@ -167,10 +167,10 @@ def save_device_profile(
     # 1. Save local machine profile
     if auto_save_local:
         try:
-            # Determine suitable save path (DATN/hardware_profile_local.json if in DATN or root)
+            # Determine suitable save path (OC/hardware_profile_local.json if in OC or root)
             target_local = LOCAL_PROFILE_NAME
-            if os.path.exists("DATN") and not os.path.exists("hardware_profile.json"):
-                target_local = os.path.join("DATN", LOCAL_PROFILE_NAME)
+            if os.path.exists("OC") and not os.path.exists("hardware_profile.json"):
+                target_local = os.path.join("OC", LOCAL_PROFILE_NAME)
             with open(target_local, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
             try:

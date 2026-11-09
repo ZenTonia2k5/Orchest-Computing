@@ -78,14 +78,13 @@ Thumbs.db
 *.swo
 
 # Local scratch / test artifacts
-DATN/benchmark_results.json
+OC/benchmark_results.json
 benchmark_results.json
 *hardware_profile_local.json
-DATN/hardware_profile_local.json
-DATN/hardware_profile.json
+OC/hardware_profile_local.json
 
 # Downloaded models cache
-/DATN/models/
+/OC/models/
 /models/
-!/DATN/orchest/models/
+!/OC/orchest/models/
 *.safetensors

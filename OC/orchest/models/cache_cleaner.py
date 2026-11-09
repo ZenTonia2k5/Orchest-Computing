@@ -9,8 +9,8 @@ logger = logging.getLogger("orchest.cache_cleaner")
 
 def get_app_models_dir() -> str:
     """
-    Returns the application's local models directory (DATN/models).
-    Defaults to DATN/models, or ORCHEST_MODELS_DIR environment variable if specified.
+    Returns the application's local models directory (OC/models).
+    Defaults to OC/models, or ORCHEST_MODELS_DIR environment variable if specified.
     Automatically creates the directory if it does not exist.
     """
     custom = os.environ.get("ORCHEST_MODELS_DIR")
@@ -18,8 +18,8 @@ def get_app_models_dir() -> str:
         target = os.path.abspath(custom)
     else:
         cur_file = os.path.abspath(__file__)
-        datn_dir = os.path.abspath(os.path.join(os.path.dirname(cur_file), "..", ".."))
-        target = os.path.join(datn_dir, "models")
+        oc_dir = os.path.abspath(os.path.join(os.path.dirname(cur_file), "..", ".."))
+        target = os.path.join(oc_dir, "models")
     os.makedirs(target, exist_ok=True)
     return target
 
