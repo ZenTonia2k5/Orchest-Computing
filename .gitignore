@@ -83,6 +83,15 @@ benchmark_results.json
 *hardware_profile_local.json
 OC/hardware_profile_local.json
 
+# Hardware profiling & runtime benchmark changes
+*hardware_profile*.json
+hardware_profile.json
+OC/hardware_profile.json
+calibration_profile.json
+OC/calibration_profile.json
+held_out_evaluation_results.json
+OC/held_out_evaluation_results.json
+
 # Downloaded models cache
 /OC/models/
 /models/
