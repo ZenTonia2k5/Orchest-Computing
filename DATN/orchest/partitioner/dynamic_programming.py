@@ -39,20 +39,9 @@ class PartitionEvaluationResult:
 
 class DynamicPartitioner:
     """
-    Dynamic Programming Graph Partitioning Algorithm for Model Dynamic Slicing.
-
-    Optimality Specification:
-    Guarantees globally optimal partition strictly within the defined partition space:
-    1. 1D Contiguous Pipeline Partitioning: Ordered sequence of pipeline stages (node 0 -> node 1 -> ... -> node_{kappa-1}, kappa <= K).
-    2. Non-overlapping contiguous layer intervals: Each selected node s takes a contiguous sub-range [layer_start_s, layer_end_s].
-    3. Strict Model Working Set memory feasibility: M_stage(s) <= alpha * M_usable(s).
-    4. Minimization of total end-to-end pipeline latency (compute + communication).
-    Note: Does not search arbitrary DAGs, tensor-parallel splits, or non-contiguous layer permutations (NP-hard).
-
-    Complexity:
-    - Time Complexity: O(K * N^2) where K is the number of nodes and N is the number of layers.
-      Precomputed layer prefix sums ensure each interval query is O(1).
-    - Memory Complexity: O(K * N) for DP cost table and parent backtracking pointers.
+    Partitions transformer model layers across pipeline nodes using dynamic programming.
+    Finds contiguous layer assignments to minimize total latency (compute + transfer)
+    while respecting node memory limits.
     """
 
     def __init__(self, cost_calc: Optional[PartitionCostCalculator] = None):
@@ -164,7 +153,7 @@ class DynamicPartitioner:
                         dp[s][i] = total_cost
                         parent[s][i] = k - 1
 
-        # Proposal Section 4.8 Equation (126): P* = argmin_{1 <= kappa <= K} DP[kappa][L]
+        # Pick stage count that minimizes end-to-end latency
         best_stage = -1
         min_total_cost = float("inf")
         for s in range(K):
@@ -930,8 +919,7 @@ class DynamicPartitioner:
         **kwargs
     ) -> Dict[float, Dict[str, Any]]:
         """
-        Performs Safety-Ceiling Sensitivity Analysis across alpha in {0.80, 0.85, 0.90, 0.95} (Proposal RQ8).
-        Assesses impact of memory safety margin on feasibility, stage count, and predicted latency.
+        Evaluates partition feasibility and latency across different memory safety thresholds (alpha).
         """
         alphas = alphas or [0.80, 0.85, 0.90, 0.95]
         results = {}

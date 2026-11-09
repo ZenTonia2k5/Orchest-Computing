@@ -146,9 +146,9 @@ def test_heuristic_baselines_and_oracle_regret():
 
 def test_gqa_aware_kv_cache():
     """
-    Verifies GQA-aware KV Cache estimation (Proposal Section 4.4):
-    M_KV using num_kv_heads=4 (Qwen2.5-7B style) should be significantly lower
-    than naive MHA using num_heads=28.
+    Verifies GQA-aware KV Cache estimation:
+    num_kv_heads=4 (Qwen2.5-7B style) should be significantly lower
+    than standard MHA with num_heads=28.
     """
     mha_kv_mb = PartitionCostCalculator.estimate_kv_cache_mb(
         num_layers=28, hidden_size=3584, num_heads=28, num_kv_heads=28, max_seq_len=2048, batch_size=1
@@ -165,7 +165,7 @@ def test_gqa_aware_kv_cache():
 
 def test_alpha_safety_ceiling_sensitivity():
     """
-    Verifies Sweep over Memory Safety Ceiling alpha in {0.80, 0.85, 0.90, 0.95} (Proposal RQ8).
+    Verifies sweep over memory safety ceiling alpha in {0.80, 0.85, 0.90, 0.95}.
     """
     nodes = create_test_heterogeneous_cluster()
     layers = ModelProfiler.profile_transformer_layers(
@@ -519,12 +519,14 @@ def test_activation_comm_cost_and_staging():
 
 def test_cost_model_calibration_and_heldout_isolation():
     """
-    Verifies that calibration training data and held-out evaluation test data
-    are strictly isolated without data leakage, and calibration reduces prediction error.
+    Verifies that calibration training data and evaluation data are properly split,
+    and calibration reduces prediction error on unseen prompt lengths.
     """
-    source_profile = "hardware_profile.json"
-    calib_path = "calibration_profile.json"
-    heldout_path = "held_out_evaluation_results.json"
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    source_profile = os.path.join(base_dir, "hardware_profile.json")
+    calib_path = os.path.join(base_dir, "calibration_profile.json")
+    heldout_path = os.path.join(base_dir, "held_out_evaluation_results.json")
 
     # 1. Run full calibration and isolation pipeline
     params, report = CostModelCalibrator.calibrate_and_isolate_profiles(
@@ -545,7 +547,6 @@ def test_cost_model_calibration_and_heldout_isolation():
     assert report["mape_improvement_pct"] > 0.0
 
     # 4. Verify separate files exist on disk with strict dataset roles
-    import os
     assert os.path.exists(calib_path)
     assert os.path.exists(heldout_path)
 
@@ -559,7 +560,7 @@ def test_cost_model_calibration_and_heldout_isolation():
     assert heldout_json["is_held_out"] is True
     assert heldout_json["do_not_calibrate"] is True
 
-    # 5. Verify disjoint prompt lengths (zero data leakage)
+    # 5. Verify disjoint prompt lengths
     calib_prompts = {
         e["prompt_len"]
         for model_entries in calib_json["models"].values()

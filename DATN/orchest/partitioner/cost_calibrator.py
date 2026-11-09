@@ -15,6 +15,19 @@ from ..profiler.node_profiler import NodeMetrics, GPUMetrics
 logger = logging.getLogger("CostModelCalibrator")
 
 
+def _resolve_profile_path(path_str: str) -> str:
+    if os.path.exists(path_str):
+        return path_str
+    try:
+        from ..profiler.profile_manager import find_profile_path
+        resolved = find_profile_path(path_str)
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+    return path_str
+
+
 @dataclass
 class CalibrationParameters:
     """
@@ -37,11 +50,8 @@ class CalibrationParameters:
 
 class CostModelCalibrator:
     """
-    Calibrates Cost Model predictions (Prefill compute latency, memory footprint, activation staging)
-    using empirical profiling data while strictly enforcing data partition separation:
-    - Calibration dataset (training): used ONLY for fitting empirical scaling factors.
-    - Held-out evaluation dataset (test): strictly quarantined from calibration to prevent data leakage.
-    Follows Section 4.3 & 4.8 of the research proposal.
+    Calibrates cost model predictions (prefill compute latency, memory footprint, activation staging)
+    using empirical profiling benchmark data.
     """
 
     @classmethod
@@ -52,12 +62,12 @@ class CostModelCalibrator:
         calibration_prompt_lens: Optional[List[int]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
-        Splits profiling data into disjoint Calibration (training) and Held-out (testing) partitions.
-        Ensures strict research separation with zero data leakage.
-        Default: Prompt lengths <= 512 go to calibration; prompt lengths > 512 go to held-out evaluation.
+        Splits profiling data into calibration (training) and held-out evaluation sets.
+        Default: prompt lengths <= 512 go to calibration; longer prompts go to evaluation.
         """
         if isinstance(raw_data, str):
-            with open(raw_data, "r", encoding="utf-8") as f:
+            target_path = _resolve_profile_path(raw_data)
+            with open(target_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         else:
             data = raw_data
@@ -100,46 +110,41 @@ class CostModelCalibrator:
                     heldout_data["models"][m_name].append(entry)
                     heldout_keys.add(sample_key)
 
-        # Strict scientific verification: partitions must be completely disjoint
         overlap = calib_keys.intersection(heldout_keys)
         if overlap:
-            raise ValueError(f"Data leakage detected! Overlapping samples between calibration and held-out: {overlap}")
+            raise ValueError(f"Overlapping samples between calibration and held-out evaluation sets: {overlap}")
 
         logger.info(
-            f"Dataset split complete: {len(calib_keys)} calibration samples, {len(heldout_keys)} held-out samples. "
-            f"Zero data leakage verified."
+            f"Dataset split complete: {len(calib_keys)} calibration samples, {len(heldout_keys)} held-out samples."
         )
         return calib_data, heldout_data
 
     @classmethod
     def save_calibration_data(cls, calib_data: Dict[str, Any], filepath: str = "calibration_profile.json") -> str:
-        """
-        Saves calibration training dataset to a separate dedicated JSON file.
-        """
+        """Saves calibration dataset to a JSON file."""
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(calib_data, f, indent=2)
-        logger.info(f"Calibration training data successfully saved to: {filepath}")
+        logger.info(f"Calibration data saved to: {filepath}")
         return filepath
 
     @classmethod
     def save_heldout_evaluation_data(
         cls, heldout_data: Dict[str, Any], filepath: str = "held_out_evaluation_results.json"
     ) -> str:
-        """
-        Saves held-out evaluation test dataset to a separate dedicated JSON file, strictly isolated from calibration.
-        """
+        """Saves held-out evaluation dataset to a JSON file."""
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(heldout_data, f, indent=2)
-        logger.info(f"Held-out evaluation data successfully saved to: {filepath}")
+        logger.info(f"Held-out evaluation data saved to: {filepath}")
         return filepath
 
     @classmethod
     def fit(cls, calibration_data: Union[str, Dict[str, Any]]) -> CalibrationParameters:
         """
-        Fits empirical scaling factors (gamma_compute, gamma_memory, comm_staging) using the calibration dataset.
+        Fits empirical scaling factors (gamma_compute, gamma_memory, comm_staging) using calibration data.
         """
         if isinstance(calibration_data, str):
-            with open(calibration_data, "r", encoding="utf-8") as f:
+            target_path = _resolve_profile_path(calibration_data)
+            with open(target_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         else:
             data = calibration_data
@@ -269,7 +274,8 @@ class CostModelCalibrator:
         Calculates MAPE and RMSE for uncalibrated vs calibrated cost models.
         """
         if isinstance(heldout_data, str):
-            with open(heldout_data, "r", encoding="utf-8") as f:
+            target_path = _resolve_profile_path(heldout_data)
+            with open(target_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         else:
             data = heldout_data
@@ -392,14 +398,15 @@ class CostModelCalibrator:
         heldout_path: str = "held_out_evaluation_results.json",
     ) -> Tuple[CalibrationParameters, Dict[str, Any]]:
         """
-        Convenience pipeline:
+        Calibrates model parameters and evaluates on held-out samples:
         1. Ingests source hardware profile.
-        2. Splits into disjoint calibration and held-out evaluation sets.
-        3. Saves both files separately to prevent data leakage.
+        2. Splits into calibration and held-out evaluation sets.
+        3. Saves dataset splits to disk.
         4. Fits calibration parameters on training set.
         5. Evaluates model accuracy on held-out test set.
         """
-        calib_data, heldout_data = cls.split_calibration_and_heldout_data(source_profile_path)
+        source_path = _resolve_profile_path(source_profile_path)
+        calib_data, heldout_data = cls.split_calibration_and_heldout_data(source_path)
         cls.save_calibration_data(calib_data, calibration_path)
         cls.save_heldout_evaluation_data(heldout_data, heldout_path)
 

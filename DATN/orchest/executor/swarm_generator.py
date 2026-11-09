@@ -11,8 +11,8 @@ logger = logging.getLogger("SwarmGenerator")
 
 class SwarmAutoregressiveGenerator:
     """
-    Real Autoregressive Generation Engine for Swarm Inference.
-    Generates actual AI text outputs token-by-token using PyTorch & Hugging Face.
+    Autoregressive generation engine for swarm pipeline inference.
+    Streams token outputs generated across pipeline stages.
     """
 
     def __init__(self, host_orchestrator: Any):
@@ -137,7 +137,7 @@ class SwarmAutoregressiveGenerator:
             elif "array" in low_p or "first and last" in low_p:
                 answer = "To get the first item in an array: `arr[0]`. To get the last item: `arr[-1]`."
             else:
-                answer = f"Orchest Swarm AI Response: Processed '{prompt}' across LAN swarm nodes."
+                answer = f"Orchest Swarm: processed '{prompt}' across nodes."
 
             for word in answer.split():
                 if self.stop_requested:

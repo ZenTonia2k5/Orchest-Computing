@@ -6,9 +6,8 @@ import torch.nn.functional as F
 
 class NumericalCorrectnessAuditor:
     """
-    Validates numerical correctness and probability distribution fidelity between
-    distributed pipeline inference and single-node PyTorch eager reference execution.
-    Implements the Teacher Forcing evaluation criteria specified in the revised proposal.
+    Validates numerical consistency and probability distribution fidelity between
+    distributed pipeline inference and single-node reference execution.
     """
 
     # Pass/Fail Threshold Constants
