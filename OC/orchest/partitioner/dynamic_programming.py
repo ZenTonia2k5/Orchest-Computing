@@ -1025,22 +1025,36 @@ class DynamicPartitioner:
     def evaluate_partition_regret(
         candidate_assignments: List[SliceAssignment],
         oracle_assignments: List[SliceAssignment],
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
-        Calculates Realized Partition Regret and Relative Regret Percentage:
-        Regret = Latency_Candidate - Latency_Oracle
+        Calculates Algorithmic Partition Regret:
+        Raw Regret = Latency_Candidate - Latency_Oracle.
+
+        Negative raw regret (cand_lat < orac_lat) is not silently clipped to 0.0.
+        Instead, it exposes discrepancies (such as incomplete oracle search spaces
+        or mismatched constraints) and sets `has_negative_discrepancy=True`.
         """
         cand_lat = sum(a.estimated_compute_ms + a.estimated_comm_ms for a in candidate_assignments)
         orac_lat = sum(a.estimated_compute_ms + a.estimated_comm_ms for a in oracle_assignments)
 
-        regret_ms = max(cand_lat - orac_lat, 0.0)
-        rel_regret_pct = (regret_ms / max(orac_lat, 1e-5)) * 100.0
+        raw_regret_ms = cand_lat - orac_lat
+        has_negative_discrepancy = raw_regret_ms < -1e-3
+        is_optimal = abs(raw_regret_ms) <= 1e-3
+        rel_regret_pct = (raw_regret_ms / max(orac_lat, 1e-5)) * 100.0
 
         return {
-            "candidate_latency_ms": round(cand_lat, 2),
-            "oracle_latency_ms": round(orac_lat, 2),
-            "realized_regret_ms": round(regret_ms, 2),
+            "candidate_latency_ms": round(cand_lat, 3),
+            "oracle_latency_ms": round(orac_lat, 3),
+            "raw_regret_ms": round(raw_regret_ms, 4),
+            "realized_regret_ms": round(raw_regret_ms, 3),
             "relative_regret_pct": round(rel_regret_pct, 2),
+            "is_optimal": is_optimal,
+            "has_negative_discrepancy": has_negative_discrepancy,
+            "discrepancy_message": (
+                "Discrepancy detected: candidate plan achieved lower predicted cost than exhaustive oracle. "
+                "This reveals differing feasibility constraints or incomplete oracle search space."
+                if has_negative_discrepancy else None
+            ),
         }
 
     def identify_weak_nodes(

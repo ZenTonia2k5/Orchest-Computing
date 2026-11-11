@@ -1,0 +1,138 @@
+{
+  "title": "Orchest Evaluation and Reproducibility Report",
+  "dataset_statistics": {
+    "calibration_samples": 4,
+    "held_out_samples": 2,
+    "quarantine_leakage_blocked": true
+  },
+  "fitted_parameters": {
+    "device_type": "cuda",
+    "compute_scaling_factor": 0.688,
+    "memory_scaling_factor": 0.151,
+    "comm_staging_slope_ms_per_mb": 1.211,
+    "comm_staging_intercept_ms": 0.05,
+    "r2_compute": 1.0,
+    "r2_memory": 1.0,
+    "num_samples": 4,
+    "timestamp": "2026-11-11 08:36:07",
+    "model_scaling_factors": {
+      "Qwen2.5-0.5B": 0.688,
+      "Qwen2.5-1.5B": 0.556
+    },
+    "metadata": {
+      "calibration_samples_count": 4,
+      "base_reference_tflops": 10.0,
+      "per_model_ratios": {
+        "Qwen2.5-0.5B": 0.688,
+        "Qwen2.5-1.5B": 0.556
+      }
+    }
+  },
+  "held_out_prediction_error": {
+    "global_calibration": {
+      "num_heldout_samples": 2,
+      "uncalibrated_mape_pct": 70.82,
+      "calibrated_mape_pct": 17.52,
+      "global_calibrated_mape_pct": 17.52,
+      "model_calibrated_mape_pct": 4.65,
+      "mape_improvement_pct": 75.26,
+      "uncalibrated_rmse_ms": 3.774,
+      "calibrated_rmse_ms": 1.327,
+      "global_calibrated_rmse_ms": 1.327,
+      "model_calibrated_rmse_ms": 0.328,
+      "records": [
+        {
+          "model": "Qwen2.5-0.5B",
+          "prompt_len": 1024,
+          "measured_ms": 2.403,
+          "uncalibrated_ms": 3.523,
+          "calibrated_ms": 2.424,
+          "global_calibrated_ms": 2.424,
+          "model_calibrated_ms": 2.424,
+          "uncalibrated_error_pct": 46.61,
+          "calibrated_error_pct": 0.87,
+          "global_error_pct": 0.87,
+          "model_error_pct": 0.87
+        },
+        {
+          "model": "Qwen2.5-1.5B",
+          "prompt_len": 1024,
+          "measured_ms": 5.492,
+          "uncalibrated_ms": 10.711,
+          "calibrated_ms": 7.369,
+          "global_calibrated_ms": 7.369,
+          "model_calibrated_ms": 5.955,
+          "uncalibrated_error_pct": 95.03,
+          "calibrated_error_pct": 34.18,
+          "global_error_pct": 34.18,
+          "model_error_pct": 8.44
+        }
+      ]
+    },
+    "per_model_calibration": {
+      "num_heldout_samples": 2,
+      "uncalibrated_mape_pct": 70.82,
+      "calibrated_mape_pct": 4.65,
+      "global_calibrated_mape_pct": 17.52,
+      "model_calibrated_mape_pct": 4.65,
+      "mape_improvement_pct": 93.43,
+      "uncalibrated_rmse_ms": 3.774,
+      "calibrated_rmse_ms": 0.328,
+      "global_calibrated_rmse_ms": 1.327,
+      "model_calibrated_rmse_ms": 0.328,
+      "records": [
+        {
+          "model": "Qwen2.5-0.5B",
+          "prompt_len": 1024,
+          "measured_ms": 2.403,
+          "uncalibrated_ms": 3.523,
+          "calibrated_ms": 2.424,
+          "global_calibrated_ms": 2.424,
+          "model_calibrated_ms": 2.424,
+          "uncalibrated_error_pct": 46.61,
+          "calibrated_error_pct": 0.87,
+          "global_error_pct": 0.87,
+          "model_error_pct": 0.87
+        },
+        {
+          "model": "Qwen2.5-1.5B",
+          "prompt_len": 1024,
+          "measured_ms": 5.492,
+          "uncalibrated_ms": 10.711,
+          "calibrated_ms": 5.955,
+          "global_calibrated_ms": 7.369,
+          "model_calibrated_ms": 5.955,
+          "uncalibrated_error_pct": 95.03,
+          "calibrated_error_pct": 8.44,
+          "global_error_pct": 34.18,
+          "model_error_pct": 8.44
+        }
+      ]
+    }
+  },
+  "algorithmic_optimality": {
+    "candidate_predicted_ms": 3.2,
+    "oracle_predicted_ms": 3.2,
+    "raw_regret_ms": 0.0,
+    "relative_regret_pct": 0.0,
+    "is_optimal": true,
+    "has_negative_discrepancy": false,
+    "discrepancy_message": null
+  },
+  "physical_regret_concept": {
+    "chosen_partition_measured_ms": 42.5,
+    "empirical_best_measured_ms": 41.8,
+    "raw_regret_ms": 0.7,
+    "relative_regret_pct": 1.67,
+    "has_physical_speedup": false,
+    "has_negative_discrepancy": false,
+    "discrepancy_message": null
+  },
+  "historical_reproduction_notes": {
+    "historical_reported_mape": "3.82% (CI: [3.10%, 4.54%])",
+    "historical_mechanism": "Synthetic Gaussian noise random.gauss(0, 0.02) over repeated simulated runs",
+    "empirical_held_out_global_mape": "17.52%",
+    "empirical_held_out_per_model_mape": "4.65%",
+    "scientific_takeaway": "Zero algorithmic regret proves discrete optimization correctness of the solver, while prediction error measures cost model fidelity and physical regret measures hardware performance."
+  }
+}

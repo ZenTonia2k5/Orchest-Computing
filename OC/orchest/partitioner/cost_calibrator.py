@@ -34,15 +34,22 @@ class CalibrationParameters:
     Empirical calibration parameters fitted from real benchmark profiling measurements.
     """
     device_type: str
-    compute_scaling_factor: float = 1.0   # gamma_compute
-    memory_scaling_factor: float = 1.0    # gamma_memory
+    compute_scaling_factor: float = 1.0   # global median gamma_compute
+    memory_scaling_factor: float = 1.0    # global median gamma_memory
     comm_staging_slope_ms_per_mb: float = 0.5  # ms per MB
-    comm_staging_intercept_ms: float = 0.1
+    comm_staging_intercept_ms: float = 0.05
     r2_compute: float = 1.0
     r2_memory: float = 1.0
     num_samples: int = 0
     timestamp: str = ""
+    model_scaling_factors: Dict[str, float] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def get_compute_scaling_factor(self, model_name: Optional[str] = None) -> float:
+        """Returns model-specific scaling factor if available, else cluster-wide global factor."""
+        if model_name and self.model_scaling_factors and model_name in self.model_scaling_factors:
+            return self.model_scaling_factors[model_name]
+        return self.compute_scaling_factor
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -141,6 +148,7 @@ class CostModelCalibrator:
     def fit(cls, calibration_data: Union[str, Dict[str, Any]]) -> CalibrationParameters:
         """
         Fits empirical scaling factors (gamma_compute, gamma_memory, comm_staging) using calibration data.
+        Strictly enforces quarantine against held-out evaluation datasets to prevent data leakage.
         """
         if isinstance(calibration_data, str):
             target_path = _resolve_profile_path(calibration_data)
@@ -149,8 +157,28 @@ class CostModelCalibrator:
         else:
             data = calibration_data
 
+        # Strict quarantine enforcement: prevent data leakage
+        if (
+            data.get("do_not_calibrate") is True
+            or data.get("is_held_out") is True
+            or data.get("dataset_role") == "held_out_evaluation"
+        ):
+            raise ValueError(
+                "Data leakage prevented: cannot fit calibration parameters on held-out evaluation dataset "
+                "(flag 'do_not_calibrate' or 'is_held_out' or dataset_role 'held_out_evaluation' is set)."
+            )
+
+        for m_name, entries in data.get("models", {}).items():
+            for entry in entries:
+                if entry.get("do_not_calibrate") is True or entry.get("is_held_out") is True:
+                    raise ValueError(
+                        f"Data leakage prevented: sample for model '{m_name}' (prompt_len={entry.get('prompt_len')}) "
+                        "is tagged with 'do_not_calibrate' / 'is_held_out'."
+                    )
+
         device_type = data.get("device_type", "cuda")
         measured_compute_ratios = []
+        per_model_compute_ratios: Dict[str, List[float]] = {}
         measured_mem_ratios = []
         staging_slopes = []
 
@@ -201,6 +229,9 @@ class CostModelCalibrator:
                 num_kv_heads=spec.num_kv_heads,
             )
 
+            if m_name not in per_model_compute_ratios:
+                per_model_compute_ratios[m_name] = []
+
             for entry in entries:
                 prompt_len = int(entry.get("prompt_len", 128))
                 batch_size = int(entry.get("batch_size", 1))
@@ -219,7 +250,9 @@ class CostModelCalibrator:
                 theo_ms = max(theo_prefill["compute_ms"], 1e-4)
 
                 # Ratio: measured / theoretical
-                measured_compute_ratios.append(t_meas_ms / theo_ms)
+                c_ratio = t_meas_ms / theo_ms
+                measured_compute_ratios.append(c_ratio)
+                per_model_compute_ratios[m_name].append(c_ratio)
 
                 # Memory ratio
                 theo_stage_mem = PartitionCostCalculator.calculate_working_set_mb(
@@ -244,6 +277,12 @@ class CostModelCalibrator:
         gamma_memory = round(float(torch.median(torch.tensor(measured_mem_ratios)).item()), 3) if measured_mem_ratios else 1.0
         comm_slope = round(float(torch.median(torch.tensor(staging_slopes)).item()), 3) if staging_slopes else 0.5
 
+        # Per-model compute scaling factors
+        model_scalings = {}
+        for m_name, ratios in per_model_compute_ratios.items():
+            if ratios:
+                model_scalings[m_name] = round(float(torch.median(torch.tensor(ratios)).item()), 3)
+
         params = CalibrationParameters(
             device_type=device_type,
             compute_scaling_factor=gamma_compute,
@@ -252,9 +291,11 @@ class CostModelCalibrator:
             comm_staging_intercept_ms=0.05,
             num_samples=len(measured_compute_ratios),
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+            model_scaling_factors=model_scalings,
             metadata={
                 "calibration_samples_count": len(measured_compute_ratios),
                 "base_reference_tflops": base_tflops,
+                "per_model_ratios": model_scalings,
             },
         )
         logger.info(
@@ -268,10 +309,12 @@ class CostModelCalibrator:
         cls,
         heldout_data: Union[str, Dict[str, Any]],
         calib_params: CalibrationParameters,
+        use_per_model: bool = False,
     ) -> Dict[str, Any]:
         """
         Evaluates prediction accuracy on the held-out evaluation dataset.
         Calculates MAPE and RMSE for uncalibrated vs calibrated cost models.
+        Supports both global cluster-wide calibration and model-specific scaling factors.
         """
         if isinstance(heldout_data, str):
             target_path = _resolve_profile_path(heldout_data)
@@ -318,8 +361,14 @@ class CostModelCalibrator:
 
         uncalibrated_errors_pct = []
         calibrated_errors_pct = []
+        global_calibrated_errors_pct = []
+        model_calibrated_errors_pct = []
+
         uncalibrated_sq_errors = []
         calibrated_sq_errors = []
+        global_calibrated_sq_errors = []
+        model_calibrated_sq_errors = []
+
         eval_records = []
 
         for m_name, entries in data.get("models", {}).items():
@@ -346,16 +395,28 @@ class CostModelCalibrator:
                     batch_size=batch_size,
                 )
                 t_uncalib_ms = theo_cost["compute_ms"]
-                # Calibrated prediction
-                t_calib_ms = t_uncalib_ms * calib_params.compute_scaling_factor
+
+                # Global and model-specific calibrated predictions
+                t_global_calib_ms = t_uncalib_ms * calib_params.compute_scaling_factor
+                model_scaling = calib_params.get_compute_scaling_factor(m_name)
+                t_model_calib_ms = t_uncalib_ms * model_scaling
+
+                t_calib_ms = t_model_calib_ms if use_per_model else t_global_calib_ms
 
                 err_uncalib = abs(t_uncalib_ms - t_meas_ms) / max(t_meas_ms, 1e-4) * 100.0
                 err_calib = abs(t_calib_ms - t_meas_ms) / max(t_meas_ms, 1e-4) * 100.0
+                err_global = abs(t_global_calib_ms - t_meas_ms) / max(t_meas_ms, 1e-4) * 100.0
+                err_model = abs(t_model_calib_ms - t_meas_ms) / max(t_meas_ms, 1e-4) * 100.0
 
                 uncalibrated_errors_pct.append(err_uncalib)
                 calibrated_errors_pct.append(err_calib)
+                global_calibrated_errors_pct.append(err_global)
+                model_calibrated_errors_pct.append(err_model)
+
                 uncalibrated_sq_errors.append((t_uncalib_ms - t_meas_ms) ** 2)
                 calibrated_sq_errors.append((t_calib_ms - t_meas_ms) ** 2)
+                global_calibrated_sq_errors.append((t_global_calib_ms - t_meas_ms) ** 2)
+                model_calibrated_sq_errors.append((t_model_calib_ms - t_meas_ms) ** 2)
 
                 eval_records.append({
                     "model": m_name,
@@ -363,14 +424,23 @@ class CostModelCalibrator:
                     "measured_ms": t_meas_ms,
                     "uncalibrated_ms": round(t_uncalib_ms, 3),
                     "calibrated_ms": round(t_calib_ms, 3),
+                    "global_calibrated_ms": round(t_global_calib_ms, 3),
+                    "model_calibrated_ms": round(t_model_calib_ms, 3),
                     "uncalibrated_error_pct": round(err_uncalib, 2),
                     "calibrated_error_pct": round(err_calib, 2),
+                    "global_error_pct": round(err_global, 2),
+                    "model_error_pct": round(err_model, 2),
                 })
 
         uncalib_mape = float(torch.mean(torch.tensor(uncalibrated_errors_pct)).item()) if uncalibrated_errors_pct else 0.0
         calib_mape = float(torch.mean(torch.tensor(calibrated_errors_pct)).item()) if calibrated_errors_pct else 0.0
+        global_mape = float(torch.mean(torch.tensor(global_calibrated_errors_pct)).item()) if global_calibrated_errors_pct else 0.0
+        model_mape = float(torch.mean(torch.tensor(model_calibrated_errors_pct)).item()) if model_calibrated_errors_pct else 0.0
+
         uncalib_rmse = math.sqrt(sum(uncalibrated_sq_errors) / max(len(uncalibrated_sq_errors), 1))
         calib_rmse = math.sqrt(sum(calibrated_sq_errors) / max(len(calibrated_sq_errors), 1))
+        global_rmse = math.sqrt(sum(global_calibrated_sq_errors) / max(len(global_calibrated_sq_errors), 1))
+        model_rmse = math.sqrt(sum(model_calibrated_sq_errors) / max(len(model_calibrated_sq_errors), 1))
 
         mape_reduction_pct = max(((uncalib_mape - calib_mape) / max(uncalib_mape, 1e-6)) * 100.0, 0.0)
 
@@ -378,9 +448,13 @@ class CostModelCalibrator:
             "num_heldout_samples": len(eval_records),
             "uncalibrated_mape_pct": round(uncalib_mape, 2),
             "calibrated_mape_pct": round(calib_mape, 2),
+            "global_calibrated_mape_pct": round(global_mape, 2),
+            "model_calibrated_mape_pct": round(model_mape, 2),
             "mape_improvement_pct": round(mape_reduction_pct, 2),
             "uncalibrated_rmse_ms": round(uncalib_rmse, 3),
             "calibrated_rmse_ms": round(calib_rmse, 3),
+            "global_calibrated_rmse_ms": round(global_rmse, 3),
+            "model_calibrated_rmse_ms": round(model_rmse, 3),
             "records": eval_records,
         }
         logger.info(

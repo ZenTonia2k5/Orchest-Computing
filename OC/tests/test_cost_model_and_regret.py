@@ -10,7 +10,13 @@ from orchest.partitioner.cost_matrix import (
     StageMemoryFootprint,
 )
 from orchest.partitioner.cost_calibrator import CostModelCalibrator, CalibrationParameters
-from orchest.partitioner.dynamic_programming import DynamicPartitioner
+from orchest.partitioner.dynamic_programming import DynamicPartitioner, SliceAssignment
+from orchest.partitioner.eval_metrics import (
+    evaluate_algorithmic_optimality,
+    evaluate_physical_regret,
+    AlgorithmicEvaluationResult,
+    PhysicalRegretResult,
+)
 
 
 def create_test_heterogeneous_cluster():
@@ -868,6 +874,137 @@ def test_solver_calibration_end_to_end_propagation():
     assert len(plan_subset) > 0
     total_subset_compute = sum(a.estimated_compute_ms for a in plan_subset)
     assert total_subset_compute > total_compute_default
+
+
+def test_data_leakage_prevention_on_held_out():
+    """
+    Verifies strict quarantine enforcement:
+    CostModelCalibrator.fit() must reject held-out evaluation datasets with a ValueError.
+    """
+    # 1. Dataset-level quarantine flags
+    heldout_payload = {
+        "device_type": "cuda",
+        "do_not_calibrate": True,
+        "models": {
+            "Qwen2.5-0.5B": [{"prompt_len": 1024, "t_compute_pre_ms": 2.403}]
+        }
+    }
+    with pytest.raises(ValueError, match="Data leakage prevented"):
+        CostModelCalibrator.fit(heldout_payload)
+
+    # 2. dataset_role flag
+    heldout_payload_role = {
+        "device_type": "cuda",
+        "dataset_role": "held_out_evaluation",
+        "models": {
+            "Qwen2.5-0.5B": [{"prompt_len": 1024, "t_compute_pre_ms": 2.403}]
+        }
+    }
+    with pytest.raises(ValueError, match="Data leakage prevented"):
+        CostModelCalibrator.fit(heldout_payload_role)
+
+    # 3. Sample-level quarantine flag
+    sample_leak_payload = {
+        "device_type": "cuda",
+        "models": {
+            "Qwen2.5-0.5B": [
+                {"prompt_len": 512, "t_compute_pre_ms": 1.2},
+                {"prompt_len": 1024, "t_compute_pre_ms": 2.403, "do_not_calibrate": True},
+            ]
+        }
+    }
+    with pytest.raises(ValueError, match="Data leakage prevented"):
+        CostModelCalibrator.fit(sample_leak_payload)
+
+
+def test_raw_signed_regret_and_negative_discrepancy():
+    """
+    Verifies that evaluate_partition_regret() does not silently clip negative regret,
+    and flags discrepancies when candidate is artificially cheaper than oracle.
+    """
+    node = create_test_heterogeneous_cluster()[0]
+    assign_candidate = [
+        SliceAssignment(node=node, layer_start=0, layer_end=3, layers_count=4, estimated_compute_ms=10.0, estimated_comm_ms=2.0)
+    ]
+    assign_oracle = [
+        SliceAssignment(node=node, layer_start=0, layer_end=3, layers_count=4, estimated_compute_ms=12.0, estimated_comm_ms=3.0)
+    ]
+
+    # Candidate total = 12.0 ms, Oracle total = 15.0 ms -> Raw regret = -3.0 ms
+    regret = DynamicPartitioner.evaluate_partition_regret(assign_candidate, assign_oracle)
+    assert regret["raw_regret_ms"] == -3.0
+    assert regret["realized_regret_ms"] == -3.0
+    assert regret["has_negative_discrepancy"] is True
+    assert regret["is_optimal"] is False
+    assert "Discrepancy detected" in regret["discrepancy_message"]
+
+    # When candidate equals oracle, regret is exactly 0.0
+    exact_regret = DynamicPartitioner.evaluate_partition_regret(assign_oracle, assign_oracle)
+    assert exact_regret["raw_regret_ms"] == 0.0
+    assert exact_regret["is_optimal"] is True
+    assert exact_regret["has_negative_discrepancy"] is False
+
+
+def test_eval_metrics_three_dimensions_separation():
+    """
+    Separates the three scientific dimensions:
+    1. Algorithmic Optimality (Solver objective vs Oracle)
+    2. Prediction Fidelity (Theoretical vs Measured)
+    3. Physical Regret (Physical cluster execution penalty)
+    Demonstrating that Delta_algo == 0 does NOT imply Delta_phys == 0.
+    """
+    node = create_test_heterogeneous_cluster()[0]
+    oracle_plan = [
+        SliceAssignment(node=node, layer_start=0, layer_end=4, layers_count=5, estimated_compute_ms=20.0, estimated_comm_ms=5.0)
+    ]
+    solver_plan = [
+        SliceAssignment(node=node, layer_start=0, layer_end=4, layers_count=5, estimated_compute_ms=20.0, estimated_comm_ms=5.0)
+    ]
+
+    # Dimension 1: Algorithmic Regret is strictly zero (mathematically optimal solver)
+    algo_eval = evaluate_algorithmic_optimality(solver_plan, oracle_plan)
+    assert algo_eval.is_optimal is True
+    assert algo_eval.raw_regret_ms == 0.0
+    assert algo_eval.has_negative_discrepancy is False
+
+    # Dimension 2: Physical Regret on hardware
+    # Solver chose plan A (measured 45.0 ms on hardware), but empirical best on hardware was plan B (40.0 ms)
+    # due to runtime caching or kernel contention not modeled by static cost model.
+    phys_eval = evaluate_physical_regret(chosen_measured_ms=45.0, empirical_best_measured_ms=40.0)
+    assert phys_eval.raw_regret_ms == 5.0
+    assert phys_eval.relative_regret_pct == 12.5
+    # Crucial scientific check: Zero algorithmic regret does NOT imply zero physical regret
+    assert algo_eval.raw_regret_ms == 0.0 and phys_eval.raw_regret_ms > 0.0
+
+
+def test_per_model_calibration_held_out():
+    """
+    Verifies evaluate_heldout with global vs per-model scaling factors on held-out records.
+    """
+    calib_params = CalibrationParameters(
+        device_type="cuda",
+        compute_scaling_factor=0.688,
+        memory_scaling_factor=0.151,
+        comm_staging_slope_ms_per_mb=1.211,
+        model_scaling_factors={"Qwen2.5-0.5B": 0.688, "Qwen2.5-1.5B": 0.556},
+    )
+    heldout_payload = {
+        "device_type": "cuda",
+        "dataset_role": "held_out_evaluation",
+        "models": {
+            "Qwen2.5-0.5B": [{"prompt_len": 1024, "batch_size": 1, "t_compute_pre_ms": 2.403}],
+            "Qwen2.5-1.5B": [{"prompt_len": 1024, "batch_size": 1, "t_compute_pre_ms": 5.492}],
+        }
+    }
+    report_global = CostModelCalibrator.evaluate_heldout(heldout_payload, calib_params, use_per_model=False)
+    report_model = CostModelCalibrator.evaluate_heldout(heldout_payload, calib_params, use_per_model=True)
+
+    # Global calibration yields 17.52% MAPE
+    assert abs(report_global["calibrated_mape_pct"] - 17.52) < 0.2
+    # Per-model calibration reduces MAPE to 4.65%
+    assert abs(report_model["calibrated_mape_pct"] - 4.65) < 0.2
+    assert report_model["calibrated_mape_pct"] < report_global["calibrated_mape_pct"]
+
 
 
 
