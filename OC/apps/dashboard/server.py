@@ -109,6 +109,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int = 1024
     temperature: float = 0.7
+    demo_mode: bool = False
     host_ip: Optional[str] = None
 
 
@@ -116,6 +117,7 @@ class ChatSendRequest(BaseModel):
     prompt: str
     max_tokens: int = 1024
     temperature: float = 0.7
+    demo_mode: bool = False
     sender_name: Optional[str] = None
     sender_role: str = "user"  # "host" or "worker"
     host_ip: Optional[str] = None
@@ -466,7 +468,10 @@ def run_generation(req: GenerateRequest):
     def _event_generator():
         try:
             stream = swarm_generator.generate_stream(
-                prompt=req.prompt, max_new_tokens=req.max_tokens, temperature=req.temperature
+                prompt=req.prompt,
+                max_new_tokens=req.max_tokens,
+                temperature=req.temperature,
+                demo_mode=req.demo_mode,
             )
             for chunk in stream:
                 if chunk:
@@ -580,7 +585,10 @@ def send_chat_message(req: ChatSendRequest):
     def _chat_stream_generator():
         try:
             stream = swarm_generator.generate_stream(
-                prompt=req.prompt, max_new_tokens=req.max_tokens, temperature=req.temperature
+                prompt=req.prompt,
+                max_new_tokens=req.max_tokens,
+                temperature=req.temperature,
+                demo_mode=req.demo_mode,
             )
             accumulated_text = ""
             for chunk in stream:

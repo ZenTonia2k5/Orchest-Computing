@@ -1,4 +1,3 @@
-import time
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -13,12 +12,110 @@ logger = logging.getLogger("SwarmPipelineExecutor")
 class SwarmPipelineExecutor:
     """
     Coordinates multi-node pipeline execution across swarm slice assignments.
+    Provides complete execution path: tokenization -> stage forward -> activation transfer -> logits.
     """
 
-    def __init__(self, slice_plan: List[SliceAssignment], secret_key: Optional[bytes] = None, transport_type: str = "raw_tcp"):
+    def __init__(
+        self,
+        slice_plan: List[SliceAssignment],
+        secret_key: Optional[bytes] = None,
+        transport_type: str = "raw_tcp",
+        host_id: str = "host_master",
+        host_ip: str = "127.0.0.1",
+    ):
         self.slice_plan = slice_plan
         self.secret_key = secret_key
         self.transport_type = transport_type
+        self.host_id = host_id
+        self.host_ip = host_ip
+        self.stage_modules: Dict[int, torch.nn.Module] = {}
+
+    def initialize_local_stages(
+        self, model: Any, total_layers: int, device: str = "cpu"
+    ):
+        """
+        Instantiates local ModelSliceModules for each stage in the slice plan from a model instance.
+        Enables in-process execution and numerical verification without requiring separate TCP sockets.
+        """
+        from ..models.auto_slicer import AutoModelSlicer
+
+        for i, slice_assign in enumerate(self.slice_plan):
+            self.stage_modules[i] = AutoModelSlicer.create_slice(
+                model=model,
+                start_idx=slice_assign.layer_start,
+                end_idx=slice_assign.layer_end,
+                total_layers=total_layers,
+                device=device,
+            )
+
+    def forward_pipeline(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """
+        Executes sequential pipeline forward pass across all stages.
+        Transfers intermediate activation tensors between stages via local invocation
+        or network transport (send_and_receive_tensor).
+        Returns final stage logits: Tensor of shape (batch_size, seq_len, vocab_size).
+        """
+        if not self.slice_plan:
+            raise RuntimeError("Cannot execute forward_pipeline with an empty slice_plan.")
+
+        x = input_tensor
+        num_stages = len(self.slice_plan)
+
+        for i, slice_assign in enumerate(self.slice_plan):
+            # Check if stage runs locally
+            if i in self.stage_modules:
+                stage_mod = self.stage_modules[i]
+                dev = next(stage_mod.parameters()).device
+                if isinstance(x, torch.Tensor) and x.device != dev:
+                    x = x.to(dev)
+                with torch.no_grad():
+                    x = stage_mod(
+                        x,
+                        position_ids=position_ids,
+                        attention_mask=attention_mask,
+                        **kwargs,
+                    )
+            else:
+                # Stage is assigned to a worker node over network
+                node = slice_assign.node
+                target_ip = node.ip_address
+                target_port = getattr(node, "tcp_port", 5555)
+
+                meta = {
+                    "stage_index": i,
+                    "layer_start": slice_assign.layer_start,
+                    "layer_end": slice_assign.layer_end,
+                    "is_first_stage": (i == 0),
+                    "is_last_stage": (i == num_stages - 1),
+                }
+
+                ok, res_meta, res_tensor = TensorTransportClient.send_and_receive_tensor(
+                    target_ip=target_ip,
+                    target_port=target_port,
+                    msg_type=MessageType.FORWARD_TENSOR,
+                    meta=meta,
+                    tensor=x,
+                    secret_key=self.secret_key,
+                    transport_type=self.transport_type,
+                    device=str(x.device) if isinstance(x, torch.Tensor) else "cpu",
+                )
+
+                if not ok or res_tensor is None:
+                    err_msg = res_meta.get("error", "Unknown transmission error")
+                    raise RuntimeError(
+                        f"Pipeline execution failed at Stage {i} (layers [{slice_assign.layer_start}..{slice_assign.layer_end}]) "
+                        f"on node {node.node_id} ({target_ip}:{target_port}): {err_msg}"
+                    )
+
+                x = res_tensor
+
+        return x
 
     def dispatch_slice_plan(self, model_name: str, total_layers: int) -> bool:
         """
@@ -29,14 +126,13 @@ class SwarmPipelineExecutor:
 
         for i, slice_assign in enumerate(self.slice_plan):
             node = slice_assign.node
-            
+
             # Next node in pipeline sequence
             next_ip = None
             next_port = None
             if i < num_stages - 1:
                 next_node = self.slice_plan[i + 1].node
                 next_ip = next_node.ip_address
-                # Worker TCP port (assumed standard or registered)
                 next_port = getattr(next_node, "tcp_port", 5555)
 
             meta = {

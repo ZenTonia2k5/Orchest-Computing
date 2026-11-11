@@ -237,11 +237,13 @@ class WorkerNode:
 
     def _on_message_received(
         self, msg_type: MessageType, meta: Dict[str, Any], tensor: Optional[torch.Tensor]
-    ):
+    ) -> Optional[torch.Tensor]:
         if msg_type == MessageType.DISPATCH_SLICE:
             self._handle_dispatch_slice(meta)
+            return None
         elif msg_type == MessageType.FORWARD_TENSOR:
-            self._handle_forward_tensor(meta, tensor)
+            return self._handle_forward_tensor(meta, tensor)
+        return None
 
     def _handle_dispatch_slice(self, meta: Dict[str, Any]):
         model_name = meta.get("model_name", "Qwen/Qwen2.5-0.5B-Instruct")
@@ -342,9 +344,13 @@ class WorkerNode:
 
         threading.Thread(target=_bg_load, daemon=True).start()
 
-    def _handle_forward_tensor(self, meta: Dict[str, Any], input_tensor: Optional[torch.Tensor]):
-        if self.slice_module is None or input_tensor is None:
-            return
+    def _handle_forward_tensor(
+        self, meta: Dict[str, Any], input_tensor: Optional[torch.Tensor]
+    ) -> Any:
+        if input_tensor is None:
+            return {"error": "Missing input tensor"}, None
+        if self.slice_module is None:
+            return {"error": "Worker slice module not initialized or still loading"}, None
 
         self.status = "BUSY"
         device = next(self.slice_module.parameters()).device
@@ -355,17 +361,22 @@ class WorkerNode:
 
         self.status = "READY"
 
-        # Forward output to next node in pipeline sequence
-        if self.next_node_ip and self.next_node_port:
-            TensorTransportClient.send_packet(
-                target_ip=self.next_node_ip,
-                target_port=self.next_node_port,
-                msg_type=MessageType.FORWARD_TENSOR,
-                meta=meta,
-                tensor=out_tensor,
-                secret_key=self.secret_key,
-                transport_type=self.transport_type,
-            )
+        # Forward output directly to next peer only if requested
+        if meta.get("forward_to_next", False) and self.next_node_ip and self.next_node_port:
+            try:
+                TensorTransportClient.send_packet(
+                    target_ip=self.next_node_ip,
+                    target_port=self.next_node_port,
+                    msg_type=MessageType.FORWARD_TENSOR,
+                    meta=meta,
+                    tensor=out_tensor,
+                    secret_key=self.secret_key,
+                    transport_type=self.transport_type,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to forward packet to next node: {e}")
         else:
-            logger.info("Pipeline Final Stage completed on this node.")
+            logger.info("Pipeline stage completed on this node.")
+
+        return out_tensor
 

@@ -120,11 +120,24 @@ class RawTCPTransportServer:
             raw_full = header_head + raw_body
             msg_type, meta, tensor = TensorPacket.unpack(raw_full, secret_key=self.secret_key)
 
+            resp_tensor = None
+            resp_meta = {"status": "OK"}
             if self.on_tensor_received_cb:
-                self.on_tensor_received_cb(msg_type, meta, tensor)
+                cb_out = self.on_tensor_received_cb(msg_type, meta, tensor)
+                if isinstance(cb_out, torch.Tensor):
+                    resp_tensor = cb_out
+                elif isinstance(cb_out, tuple) and len(cb_out) >= 2:
+                    if isinstance(cb_out[0], dict):
+                        resp_meta.update(cb_out[0])
+                    resp_tensor = cb_out[1]
 
-            ack_pkt = TensorPacket.pack(MessageType.ACK, {"status": "OK"})
-            conn.sendall(ack_pkt)
+            if resp_tensor is not None:
+                resp_pkt = TensorPacket.pack(
+                    MessageType.FORWARD_TENSOR, resp_meta, tensor=resp_tensor, secret_key=self.secret_key
+                )
+            else:
+                resp_pkt = TensorPacket.pack(MessageType.ACK, resp_meta)
+            conn.sendall(resp_pkt)
         except Exception:
             pass
         finally:
@@ -188,6 +201,76 @@ class RawTCPTransportClient:
             return len(ack) > 0
         except Exception:
             return False
+
+    @classmethod
+    def send_and_receive_tensor(
+        cls,
+        target_ip: str,
+        target_port: int,
+        msg_type: MessageType,
+        meta: Dict[str, Any],
+        tensor: Optional[torch.Tensor] = None,
+        secret_key: Optional[bytes] = None,
+        timeout: float = 45.0,
+        device: str = "cpu",
+    ) -> Tuple[bool, Dict[str, Any], Optional[torch.Tensor]]:
+        packet_bytes = TensorPacket.pack(msg_type, meta, tensor, secret_key=secret_key)
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+
+            # Wrap client socket with mTLS Context
+            try:
+                ca_path = os.path.join(CERTS_DIR, "ca.crt")
+                worker_crt_path = os.path.join(CERTS_DIR, "worker.crt")
+                worker_key_path = os.path.join(CERTS_DIR, "worker.key")
+                if os.path.exists(ca_path) and os.path.exists(worker_crt_path):
+                    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                    context.load_cert_chain(certfile=worker_crt_path, keyfile=worker_key_path)
+                    context.load_verify_locations(cafile=ca_path)
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_REQUIRED
+                    s = context.wrap_socket(s, server_hostname="host_master")
+            except Exception:
+                pass
+
+            s.connect((target_ip, target_port))
+            s.sendall(packet_bytes)
+
+            header_head = cls._recv_exact_sock(s, TensorPacket.HEADER_SIZE)
+            if len(header_head) < TensorPacket.HEADER_SIZE:
+                s.close()
+                return False, {"error": "Incomplete header received"}, None
+
+            magic, msg_type_code, header_len, tensor_len, body_crc32 = struct.unpack(
+                TensorPacket.HEADER_STRUCT, header_head
+            )
+            raw_body = cls._recv_exact_sock(s, header_len + tensor_len)
+            s.close()
+            if len(raw_body) < header_len + tensor_len:
+                return False, {"error": "Incomplete body received"}, None
+
+            raw_full = header_head + raw_body
+            res_msg_type, res_meta, res_tensor = TensorPacket.unpack(
+                raw_full, secret_key=secret_key, device=device
+            )
+            ok = (res_tensor is not None) and ("error" not in res_meta)
+            return ok, res_meta, res_tensor
+        except Exception as e:
+            return False, {"error": str(e)}, None
+
+    @staticmethod
+    def _recv_exact_sock(s: socket.socket, num_bytes: int) -> bytes:
+        data = bytearray()
+        while len(data) < num_bytes:
+            try:
+                chunk = s.recv(min(num_bytes - len(data), 65536))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            except Exception:
+                break
+        return bytes(data)
 
 
 # ==============================================================================
@@ -506,3 +589,27 @@ class TensorTransportClient:
             return GRPCTransportClient.send_packet(target_ip, target_port, msg_type, meta, tensor, secret_key, timeout)
         else:
             return RawTCPTransportClient.send_packet(target_ip, target_port, msg_type, meta, tensor, secret_key, timeout)
+
+    @classmethod
+    def send_and_receive_tensor(
+        cls,
+        target_ip: str,
+        target_port: int,
+        msg_type: MessageType,
+        meta: Dict[str, Any],
+        tensor: Optional[torch.Tensor] = None,
+        secret_key: Optional[bytes] = None,
+        timeout: float = 45.0,
+        transport_type: str = "raw_tcp",
+        device: str = "cpu",
+    ) -> Tuple[bool, Dict[str, Any], Optional[torch.Tensor]]:
+        return RawTCPTransportClient.send_and_receive_tensor(
+            target_ip=target_ip,
+            target_port=target_port,
+            msg_type=msg_type,
+            meta=meta,
+            tensor=tensor,
+            secret_key=secret_key,
+            timeout=timeout,
+            device=device,
+        )

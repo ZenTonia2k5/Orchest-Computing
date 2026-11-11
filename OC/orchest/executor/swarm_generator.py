@@ -3,73 +3,85 @@ import time
 from typing import Generator, Dict, Any, Optional, List
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
-import threading
+from transformers import AutoTokenizer
 
 from ..models.cache_cleaner import get_app_models_dir
+from .pipeline import SwarmPipelineExecutor
 
 logger = logging.getLogger("SwarmGenerator")
 
 
 class SwarmAutoregressiveGenerator:
     """
-    Autoregressive generation engine for swarm pipeline inference.
-    Streams token outputs generated across pipeline stages.
+    Autoregressive generation engine driven by distributed pipeline execution.
+    Streams token outputs generated sequentially across pipeline stages:
+    Tokenization -> First stage -> Activation transfer -> Remaining stages -> Logits -> Sampling -> Autoregressive decoding.
     """
 
-    def __init__(self, host_orchestrator: Any):
+    def __init__(
+        self,
+        host_orchestrator: Any = None,
+        pipeline_executor: Optional[SwarmPipelineExecutor] = None,
+    ):
         self.host = host_orchestrator
-        self.local_model: Optional[Any] = None
+        self.pipeline_executor = pipeline_executor
         self.tokenizer: Optional[Any] = None
         self.loaded_model_name: Optional[str] = None
         self.stop_requested: bool = False
 
+    def set_pipeline_executor(self, executor: SwarmPipelineExecutor):
+        self.pipeline_executor = executor
+
     def warmup_model(self, model_name: Optional[str] = None):
         self.stop_requested = False
-        target_model = model_name or getattr(self.host, "active_model_name", "Qwen/Qwen2.5-0.5B-Instruct") or "Qwen/Qwen2.5-0.5B-Instruct"
-        self._ensure_model_loaded(target_model)
+        target_model = (
+            model_name
+            or getattr(self.host, "active_model_name", None)
+            or "Qwen/Qwen2.5-0.5B-Instruct"
+        )
+        self._ensure_tokenizer_loaded(target_model)
+
+        if self.pipeline_executor is None and self.host is not None:
+            if not getattr(self.host, "current_slice_plan", None):
+                try:
+                    self.host.plan_model_slicing(target_model)
+                    self.host.deploy_slice_plan()
+                except Exception as e:
+                    logger.warning(f"Could not auto-deploy slice plan during warmup: {e}")
+
+            if getattr(self.host, "current_slice_plan", None):
+                self.pipeline_executor = SwarmPipelineExecutor(
+                    slice_plan=self.host.current_slice_plan,
+                    secret_key=getattr(self.host, "secret_key", None),
+                    transport_type=getattr(self.host, "transport_type", "raw_tcp"),
+                    host_id=getattr(self.host, "node_id", "host_master"),
+                )
 
     def unload_model(self):
-        self.local_model = None
         self.tokenizer = None
         self.loaded_model_name = None
+        self.pipeline_executor = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
-        logger.info("Unloaded local model weights and freed memory cache.")
+        logger.info("Unloaded generator components and freed memory cache.")
 
-    def _ensure_model_loaded(self, model_name: str):
+    def _ensure_tokenizer_loaded(self, model_name: str):
         if self.loaded_model_name != model_name:
-            self.local_model = None
             self.tokenizer = None
 
         models_cache_dir = get_app_models_dir()
         if self.tokenizer is None:
             try:
                 logger.info(f"Loading tokenizer for {model_name} (cache: {models_cache_dir})...")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=models_cache_dir, trust_remote_code=True)
-            except Exception as e:
-                logger.warning(f"Tokenizer load notice: {e}")
-
-        if self.local_model is None and self.tokenizer is not None:
-            device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
-            try:
-                logger.info(f"Loading weights for {model_name} into {device} (cache: {models_cache_dir})...")
-                dtype = torch.float16 if device != "cpu" else torch.float32
-                self.local_model = AutoModelForCausalLM.from_pretrained(
-                    model_name,
-                    cache_dir=models_cache_dir,
-                    dtype=dtype,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                ).to(device)
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    model_name, cache_dir=models_cache_dir, trust_remote_code=True
+                )
                 self.loaded_model_name = model_name
-                logger.info(f"Successfully loaded and warmed up {model_name} on {device}.")
             except Exception as e:
-                logger.warning(f"Model load notice: {e}")
-
-        self.stop_requested = False
+                logger.warning(f"Tokenizer load failure: {e}")
+                self.tokenizer = None
 
     def request_stop(self):
         self.stop_requested = True
@@ -80,53 +92,20 @@ class SwarmAutoregressiveGenerator:
         prompt: str,
         max_new_tokens: int = 1024,
         temperature: float = 0.7,
+        demo_mode: bool = False,
     ) -> Generator[str, None, None]:
         """
-        Generates text response token-by-token instantaneously using TextIteratorStreamer.
+        Executes distributed autoregressive token generation across pipeline stages.
+
+        If demo_mode=True: emits canned simulation output explicitly tagged as demo.
+        If demo_mode=False: executes the full distributed execution path. Any failure raises
+        an explicit RuntimeError and halts evaluation.
         """
         self.stop_requested = False
-        model_name = getattr(self.host, "active_model_name", "Qwen/Qwen2.5-0.5B-Instruct") or "Qwen/Qwen2.5-0.5B-Instruct"
-        self._ensure_model_loaded(model_name)
 
-        device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
-
-        if self.local_model is not None and self.tokenizer is not None and not self.stop_requested:
-            # Format prompt using chat template for Instruct models (Qwen, Llama, etc.)
-            if hasattr(self.tokenizer, "apply_chat_template"):
-                try:
-                    messages = [{"role": "user", "content": prompt}]
-                    formatted_prompt = self.tokenizer.apply_chat_template(
-                        messages, tokenize=False, add_generation_prompt=True
-                    )
-                except Exception:
-                    formatted_prompt = prompt
-            else:
-                formatted_prompt = prompt
-
-            inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(device)
-            streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
-
-            generation_kwargs = dict(
-                **inputs,
-                streamer=streamer,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=(temperature > 0.1),
-                repetition_penalty=1.1,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-
-            gen_thread = threading.Thread(target=self.local_model.generate, kwargs=generation_kwargs)
-            gen_thread.start()
-
-            for new_text in streamer:
-                if self.stop_requested:
-                    break
-                yield new_text
-
-            gen_thread.join(timeout=0.1)
-        else:
-            # Fallback stream
+        # Explicit demo mode fallback
+        if demo_mode:
+            yield "[DEMO MODE - Simulated Output]\n"
             low_p = prompt.lower()
             if "independence" in low_p or "national day" in low_p:
                 answer = "National Independence Day of Vietnam (Ngày Quốc Khánh) is celebrated annually on September 2nd (2/9), commemorating President Ho Chi Minh reading the Declaration of Independence at Ba Dinh Square in 1945."
@@ -141,11 +120,90 @@ class SwarmAutoregressiveGenerator:
             elif "array" in low_p or "first and last" in low_p:
                 answer = "To get the first item in an array: `arr[0]`. To get the last item: `arr[-1]`."
             else:
-                answer = f"Orchest Swarm: processed '{prompt}' across nodes."
+                answer = f"Orchest Swarm (Simulated): Processed '{prompt}' across nodes."
 
             for word in answer.split():
                 if self.stop_requested:
                     break
                 yield word + " "
                 time.sleep(0.02)
+            return
 
+        # Real distributed execution path (Research Mode)
+        target_model = (
+            getattr(self.host, "active_model_name", None)
+            or self.loaded_model_name
+            or "Qwen/Qwen2.5-0.5B-Instruct"
+        )
+        self._ensure_tokenizer_loaded(target_model)
+
+        if self.tokenizer is None:
+            raise RuntimeError(
+                f"Tokenizer for model '{target_model}' is not available. Real distributed execution aborted."
+            )
+
+        if self.pipeline_executor is None:
+            if self.host is not None and getattr(self.host, "current_slice_plan", None):
+                self.pipeline_executor = SwarmPipelineExecutor(
+                    slice_plan=self.host.current_slice_plan,
+                    secret_key=getattr(self.host, "secret_key", None),
+                    transport_type=getattr(self.host, "transport_type", "raw_tcp"),
+                    host_id=getattr(self.host, "node_id", "host_master"),
+                )
+            else:
+                raise RuntimeError(
+                    "No active distributed pipeline executor or slice plan found. Real distributed execution aborted."
+                )
+
+        # Format prompt with chat template if supported
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                formatted_prompt = self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            except Exception:
+                formatted_prompt = prompt
+        else:
+            formatted_prompt = prompt
+
+        # Tokenize prompt to input tensor
+        encoded = self.tokenizer(formatted_prompt, return_tensors="pt")
+        input_ids = encoded["input_ids"]
+
+        device = "cpu"
+        if self.pipeline_executor.stage_modules and 0 in self.pipeline_executor.stage_modules:
+            device = next(self.pipeline_executor.stage_modules[0].parameters()).device
+        curr_ids = input_ids.to(device)
+
+        eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
+        prev_decoded_len = len(self.tokenizer.decode(curr_ids[0], skip_special_tokens=True))
+
+        for step in range(max_new_tokens):
+            if self.stop_requested:
+                break
+
+            # Forward pass across all distributed stages
+            logits = self.pipeline_executor.forward_pipeline(curr_ids)
+            next_token_logits = logits[:, -1, :]
+
+            # Sampling
+            if temperature <= 0.05:
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            else:
+                scaled_logits = next_token_logits / max(temperature, 1e-4)
+                probs = torch.softmax(scaled_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            token_id = next_token.item()
+            if eos_token_id is not None and token_id == eos_token_id:
+                break
+
+            curr_ids = torch.cat([curr_ids, next_token.to(curr_ids.device)], dim=-1)
+
+            # Detokenize new token string
+            full_text = self.tokenizer.decode(curr_ids[0], skip_special_tokens=True)
+            new_text = full_text[prev_decoded_len:]
+            if new_text:
+                prev_decoded_len = len(full_text)
+                yield new_text
