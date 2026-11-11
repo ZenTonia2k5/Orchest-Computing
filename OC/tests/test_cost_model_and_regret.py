@@ -2,7 +2,7 @@ import os
 import json
 import pytest
 from orchest.profiler.node_profiler import NodeMetrics, GPUMetrics
-from orchest.profiler.model_profiler import ModelProfiler
+from orchest.profiler.model_profiler import ModelProfiler, LayerProfile
 from orchest.partitioner.cost_matrix import (
     PartitionCostCalculator,
     ModelArchitectureSpec,
@@ -618,6 +618,257 @@ def test_precision_and_quantization_weight_estimation():
     # 12 layers should be exactly half of 24 layers
     assert abs(slice_fp16 - (full_fp16 / 2.0)) < 0.1
     assert full_fp16 > 0.0
+
+
+def test_activation_payload_and_six_communication_terms():
+    """
+    Validates:
+    1. Dynamic activation payload scaling: Qwen2.5-7B with seq_len=512 gives 3,670,016 bytes
+       (fixing the 512x undercount from static seq_len=1 profile payload of 7,168 bytes).
+    2. Network transfer latency matches theoretical formula: 0.557 ms (seq_len=1) vs 29.860 ms (seq_len=512).
+    3. Complete six communication terms decomposition:
+       T_comm = T_sync + T_D2H + T_encode + T_network + T_decode + T_H2D.
+    """
+    nodes = create_test_heterogeneous_cluster()
+    node_cuda, node_mps = nodes[0], nodes[1]
+
+    # Qwen2.5-7B profile specification
+    hidden_size = 3584
+    dtype_bytes = 2.0  # FP16
+    batch_size = 1
+
+    layer = LayerProfile(
+        layer_idx=0,
+        name="model.layers.0",
+        param_count=250_000_000,
+        weight_memory_mb=486.5,
+        flops_per_token=500_000_000,
+        output_shape=[batch_size, 1, hidden_size],
+        output_tensor_bytes=7168,  # Default stored static payload at seq_len=1
+        num_heads=28,
+        num_kv_heads=4,
+        dtype_bytes=dtype_bytes,
+        intermediate_size=18944,
+    )
+
+    # 1. Payload comparison
+    bytes_default = layer.output_tensor_bytes
+    bytes_512 = layer.get_output_tensor_bytes(seq_len=512, batch_size=batch_size)
+    assert bytes_default == 7168
+    assert bytes_512 == 3670016
+    assert (bytes_512 / bytes_default) == 512.0
+
+    # 2. Network communication latency at 1 Gbps (1000 Mbps), RTT 1.0 ms
+    # Default (seq_len=1): RTT/2 (0.5 ms) + (7168 * 8 / 1e6 / 1000 * 1000 = 0.0573 ms) = 0.557 ms
+    comm_default_net = PartitionCostCalculator.comm_time_ms(
+        layer, node_cuda, node_mps, rtt_ms=1.0, bandwidth_mbps=1000.0,
+        seq_len=1, include_staging_overhead=False
+    )
+    assert abs(comm_default_net - 0.557) < 0.005
+
+    # True payload for seq_len=512: RTT/2 (0.5 ms) + (3670016 * 8 / 1e6 / 1000 * 1000 = 29.360 ms) = 29.860 ms
+    comm_512_net = PartitionCostCalculator.comm_time_ms(
+        layer, node_cuda, node_mps, rtt_ms=1.0, bandwidth_mbps=1000.0,
+        seq_len=512, include_staging_overhead=False
+    )
+    assert abs(comm_512_net - 29.860) < 0.005
+
+    # 3. Complete 6 communication terms decomposition
+    comm_full = PartitionCostCalculator.compute_activation_comm_cost_ms(
+        node_from=node_cuda,
+        node_to=node_mps,
+        hidden_size=hidden_size,
+        seq_len=512,
+        batch_size=batch_size,
+        dtype_bytes=dtype_bytes,
+        rtt_ms=1.0,
+        bandwidth_mbps=1000.0,
+        include_staging_overhead=True,
+    )
+    six_terms = comm_full["six_terms"]
+    assert "t_sync_ms" in six_terms
+    assert "t_d2h_ms" in six_terms
+    assert "t_encode_ms" in six_terms
+    assert "t_network_ms" in six_terms
+    assert "t_decode_ms" in six_terms
+    assert "t_h2d_ms" in six_terms
+
+    sum_terms = sum(six_terms.values())
+    assert abs(comm_full["total_comm_ms"] - sum_terms) < 0.01
+    assert abs(six_terms["t_network_ms"] - 29.860) < 0.01
+
+    # Same-node communication must be zero
+    comm_same = PartitionCostCalculator.compute_activation_comm_cost_ms(
+        node_from=node_cuda,
+        node_to=node_cuda,
+        hidden_size=hidden_size,
+        seq_len=512,
+        batch_size=batch_size,
+    )
+    assert comm_same["total_comm_ms"] == 0.0
+
+
+def test_full_memory_footprint_consistency_and_overhead():
+    """
+    Validates that:
+    1. Full memory footprint model encompasses framework runtime overhead (M_runtime) and
+       allocator fragmentation overhead (M_allocator).
+    2. In an 8-layer Qwen2.5-7B evaluation, unpadded active memory (~3985-4007 MB) is differentiated
+       from the true full stage memory footprint (~4480-4504 MB).
+    3. calculate_working_set_mb with full footprint matches calculate_stage_memory_footprint.
+    4. Solver enforces the full memory model by blocking stage placements that exceed the
+       effective safety ceiling.
+    """
+    nodes = create_test_heterogeneous_cluster()
+    node_cuda = nodes[0]
+
+    # 8 layers of Qwen2.5-7B
+    layers = [
+        LayerProfile(
+            layer_idx=i,
+            name=f"model.layers.{i}",
+            param_count=250_000_000,
+            weight_memory_mb=486.5,
+            flops_per_token=500_000_000,
+            output_shape=[1, 1, 3584],
+            output_tensor_bytes=7168,
+            num_heads=28,
+            num_kv_heads=4,
+            dtype_bytes=2.0,
+            intermediate_size=18944,
+        )
+        for i in range(8)
+    ]
+
+    # 1. Unpadded active memory (weights + KV + transient)
+    ws_unpadded = PartitionCostCalculator.calculate_working_set_mb(
+        layers=layers, start_idx=0, end_idx=7, prompt_len=512,
+        include_full_footprint=False, device_type="cuda"
+    )
+    assert 3950.0 <= ws_unpadded <= 4050.0
+
+    # 2. Full memory footprint via calculate_stage_memory_footprint
+    footprint = PartitionCostCalculator.calculate_stage_memory_footprint(
+        layers=layers, start_idx=0, end_idx=7, node=node_cuda,
+        prompt_len=512, total_layers=28
+    )
+    assert footprint.framework_runtime_mb >= 300.0  # CUDA framework runtime
+    assert footprint.allocator_overhead_mb > 150.0   # ~5% fragmentation
+    assert 4450.0 <= footprint.total_stage_memory_mb <= 4550.0
+
+    # 3. calculate_working_set_mb with include_full_footprint=True matches footprint
+    ws_full = PartitionCostCalculator.calculate_working_set_mb(
+        layers=layers, start_idx=0, end_idx=7, prompt_len=512,
+        include_full_footprint=True, device_type="cuda"
+    )
+    assert abs(ws_full - footprint.total_stage_memory_mb) / footprint.total_stage_memory_mb < 0.01
+
+    # 4. Memory ceiling enforcement in compute_time_ms
+    # Construct a constrained node with available memory between unpadded and full footprint (e.g. 4300 MB)
+    constrained_node = NodeMetrics(
+        node_id="constrained_gpu",
+        hostname="PC-Constrained",
+        ip_address="192.168.1.103",
+        os_system="Linux",
+        os_release="6.0",
+        arch="AMD64",
+        cpu_model="Core i7",
+        cpu_cores_physical=8,
+        cpu_cores_logical=16,
+        cpu_frequency_mhz=3000.0,
+        cpu_usage_pct=10.0,
+        ram_total_mb=16384.0,
+        ram_available_mb=12000.0,
+        ram_used_pct=20.0,
+        gpus=[
+            GPUMetrics(
+                index=0,
+                name="RTX 4060",
+                vram_total_mb=8192.0,
+                vram_free_mb=4300.0,  # 4300 MB > 4007 MB, but < 4503 MB full footprint
+                vram_used_mb=3892.0,
+                utilization_pct=0.0,
+                temperature_c=45.0,
+                compute_capability="8.9",
+                device_type="cuda",
+                estimated_tflops=10.0,
+            )
+        ],
+        battery_pct=None,
+        power_plugged=True,
+        timestamp=0.0,
+    )
+
+    cost_inf = PartitionCostCalculator.compute_time_ms(
+        layers=layers,
+        start_idx=0,
+        end_idx=7,
+        node=constrained_node,
+        prompt_len=512,
+        alpha=1.0,  # Even with alpha=1.0, 4500 MB exceeds 4300 MB
+    )
+    # The solver MUST reject this assignment because of runtime and allocator overhead
+    assert cost_inf == float("inf")
+
+
+def test_solver_calibration_end_to_end_propagation():
+    """
+    Validates that empirical calibration parameters directly route into the partitioner's
+    DP objective, influencing estimated compute times, communication costs, and partitioning cuts.
+    """
+    nodes = create_test_heterogeneous_cluster()
+    layers = ModelProfiler.profile_transformer_layers(
+        layers=[None] * 8, hidden_size=2048, intermediate_size=5632
+    )
+
+    partitioner = DynamicPartitioner()
+
+    # 1. Uncalibrated partition
+    plan_default = partitioner.partition(
+        layers=layers,
+        nodes=nodes,
+        prompt_len=256,
+        alpha=0.90,
+    )
+    total_compute_default = sum(a.estimated_compute_ms for a in plan_default)
+    total_comm_default = sum(a.estimated_comm_ms for a in plan_default)
+
+    # 2. Partitioner with calibrated compute scaling (e.g. 1.8x kernel overhead on CUDA)
+    calib_params = CalibrationParameters(
+        device_type="cuda",
+        compute_scaling_factor=1.8,
+        memory_scaling_factor=1.0,
+        comm_staging_slope_ms_per_mb=2.5,
+        comm_staging_intercept_ms=0.5,
+    )
+
+    plan_calibrated = partitioner.partition(
+        layers=layers,
+        nodes=nodes,
+        prompt_len=256,
+        alpha=0.90,
+        calibration_params=calib_params,
+    )
+    total_compute_calib = sum(a.estimated_compute_ms for a in plan_calibrated)
+    total_comm_calib = sum(a.estimated_comm_ms for a in plan_calibrated)
+
+    # Compute time on calibrated stages must be scaled up
+    assert total_compute_calib > total_compute_default
+    # Communication cost with higher staging slope must be scaled up
+    assert total_comm_calib >= total_comm_default
+
+    # 3. Subset DP propagation
+    plan_subset = partitioner.partition_subset_dp(
+        layers=layers,
+        nodes=nodes,
+        prompt_len=256,
+        alpha=0.90,
+        calibration_params=calib_params,
+    )
+    assert len(plan_subset) > 0
+    total_subset_compute = sum(a.estimated_compute_ms for a in plan_subset)
+    assert total_subset_compute > total_compute_default
+
 
 
 

@@ -107,8 +107,12 @@ def brute_force_optimum(
                         src, dst = nodes[perm[s - 1]], nodes[perm[s]]
                         rtt = rtt_matrix.get((src.node_id, dst.node_id), 1.0)
                         bw = bw_matrix.get((src.node_id, dst.node_id), 1000.0)
+                        cut_l = layers[start_l - 1]
+                        cut_h = cut_l.output_shape[2] if (cut_l.output_shape and len(cut_l.output_shape) > 2) else (cut_l.output_shape[-1] if cut_l.output_shape else 2048)
+                        cut_d = getattr(cut_l, "dtype_bytes", 2.0)
                         comm = cc.comm_time_ms(
-                            layers[start_l - 1].output_tensor_bytes, src, dst, rtt, bw
+                            cut_l.output_tensor_bytes, src, dst, rtt, bw,
+                            seq_len=prompt_len, hidden_size=cut_h, dtype_bytes=cut_d,
                         )
                     stage_times.append(comm + c_time)
 
@@ -162,9 +166,9 @@ def make_fleet_forcing_middle_skip():
     layers = ModelProfiler.profile_transformer_layers(
         [None] * 12, hidden_size=1024, intermediate_size=4096
     )
-    host = create_dummy_node("host_small_vram", "192.168.1.10", vram_free_mb=300, tflops=16.0)
+    host = create_dummy_node("host_small_vram", "192.168.1.10", vram_free_mb=350, tflops=16.0)
     weak = create_dummy_node("weak_middle", "192.168.1.11", vram_free_mb=8000, tflops=0.05)
-    good = create_dummy_node("fast_tail", "192.168.1.12", vram_free_mb=300, tflops=16.0)
+    good = create_dummy_node("fast_tail", "192.168.1.12", vram_free_mb=350, tflops=16.0)
     return layers, [host, weak, good]
 
 

@@ -19,6 +19,18 @@ class LayerProfile:
     dtype_bytes: float = 2.0
     intermediate_size: Optional[int] = None
 
+    def get_output_tensor_bytes(
+        self, seq_len: Optional[int] = None, batch_size: Optional[int] = None
+    ) -> int:
+        """
+        Dynamically computes output activation tensor payload in bytes for a given sequence length and batch size:
+        payload_bytes = batch_size * seq_len * hidden_size * dtype_bytes
+        """
+        b = batch_size if batch_size is not None else (self.output_shape[0] if self.output_shape else 1)
+        s = seq_len if seq_len is not None else (self.output_shape[1] if len(self.output_shape) > 1 else 1)
+        h = self.output_shape[2] if len(self.output_shape) > 2 else (self.output_shape[-1] if self.output_shape else 2048)
+        return int(max(b, 1) * max(s, 1) * h * self.dtype_bytes)
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 

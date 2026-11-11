@@ -44,8 +44,13 @@ class DynamicPartitioner:
     while respecting node memory limits.
     """
 
-    def __init__(self, cost_calc: Optional[PartitionCostCalculator] = None):
+    def __init__(
+        self,
+        cost_calc: Optional[PartitionCostCalculator] = None,
+        calibration_params: Optional[Any] = None,
+    ):
         self.cost_calc = cost_calc or PartitionCostCalculator()
+        self.calibration_params = calibration_params
 
     def partition(
         self,
@@ -61,6 +66,7 @@ class DynamicPartitioner:
         runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
         alpha: float = 0.90,
+        calibration_params: Optional[Any] = None,
     ) -> List[SliceAssignment]:
         """
         Runs stage-based O(K * N^2) Dynamic Programming solver.
@@ -69,13 +75,15 @@ class DynamicPartitioner:
         Sweeps over admissible stage counts kappa <= K and selects P* = argmin_{1 <= kappa <= K} DP[kappa][L].
         Guarantees exact mathematical optimality strictly within the defined 1D contiguous pipeline partitioning space.
         """
+        calib = calibration_params or self.calibration_params
+
         if ratios is not None and len(ratios) > 0:
             return self.partition_by_ratio(
                 layers, nodes, ratios, rtt_matrix, bw_matrix,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
                 runtime_reserve_mb=runtime_reserve_mb, phase=phase,
-                alpha=alpha
+                alpha=alpha, calibration_params=calib,
             )
 
         N = len(layers)
@@ -139,13 +147,20 @@ class DynamicPartitioner:
                         alpha=alpha,
                         cached_weights_mb=w_cached,
                         cached_linear_flops=f_cached,
+                        calibration_params=calib,
                     )
                     if c_time == float("inf"):
                         continue
 
-                    tensor_bytes = layers[k - 1].output_tensor_bytes
+                    prev_layer = layers[k - 1]
+                    tensor_bytes = prev_layer.output_tensor_bytes
+                    h_sz = prev_layer.output_shape[2] if (prev_layer.output_shape and len(prev_layer.output_shape) > 2) else (prev_layer.output_shape[-1] if prev_layer.output_shape else 2048)
+                    d_sz = getattr(prev_layer, "dtype_bytes", 2.0)
                     comm_time = self.cost_calc.comm_time_ms(
-                        tensor_bytes, prev_node, node_s, rtt, bw, batch_size=batch_size
+                        tensor_bytes, prev_node, node_s, rtt, bw,
+                        batch_size=batch_size, seq_len=prompt_len,
+                        hidden_size=h_sz, dtype_bytes=d_sz,
+                        calibration_params=calib,
                     )
 
                     total_cost = dp[s - 1][k - 1] + comm_time + c_time
@@ -196,6 +211,7 @@ class DynamicPartitioner:
                 alpha=alpha,
                 cached_weights_mb=w_cached,
                 cached_linear_flops=f_cached,
+                calibration_params=calib,
             )
 
             comm_time = 0.0
@@ -203,17 +219,25 @@ class DynamicPartitioner:
                 prev_n = nodes[raw_assignments[idx - 1][2]]
                 rtt = rtt_matrix.get((prev_n.node_id, n.node_id), 1.0)
                 bw = bw_matrix.get((prev_n.node_id, n.node_id), 1000.0)
+                cut_layer = layers[start_l - 1]
+                t_bytes = cut_layer.output_tensor_bytes
+                cut_h = cut_layer.output_shape[2] if (cut_layer.output_shape and len(cut_layer.output_shape) > 2) else (cut_layer.output_shape[-1] if cut_layer.output_shape else 2048)
+                cut_d = getattr(cut_layer, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
-                    layers[start_l - 1].output_tensor_bytes, prev_n, n, rtt, bw, batch_size=batch_size
+                    t_bytes, prev_n, n, rtt, bw,
+                    batch_size=batch_size, seq_len=prompt_len,
+                    hidden_size=cut_h, dtype_bytes=cut_d,
+                    calibration_params=calib,
                 )
 
-            ws_mb = self.cost_calc.calculate_working_set_mb(
-                layers, start_l, end_l,
+            footprint = self.cost_calc.calculate_stage_memory_footprint(
+                layers, start_l, end_l, n,
+                total_layers=N,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb,
-                cached_weights_mb=w_cached,
+                alpha=alpha, runtime_reserve_mb=runtime_reserve_mb,
             )
+            ws_mb = footprint.total_stage_memory_mb
 
             assignments.append(
                 SliceAssignment(
@@ -243,6 +267,7 @@ class DynamicPartitioner:
         runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
         alpha: float = 0.90,
+        calibration_params: Optional[Any] = None,
     ) -> List[SliceAssignment]:
         """
         Partitions layers according to custom proportional ratios while strictly verifying memory feasibility.
@@ -254,6 +279,7 @@ class DynamicPartitioner:
 
         rtt_matrix = rtt_matrix or {}
         bw_matrix = bw_matrix or {}
+        calib = calibration_params or self.calibration_params
 
         if len(ratios) < K:
             ratios = list(ratios) + [1.0] * (K - len(ratios))
@@ -296,6 +322,7 @@ class DynamicPartitioner:
                 max_seq_len=max_seq_len, batch_size=batch_size,
                 concurrency=concurrency, runtime_reserve_mb=runtime_reserve_mb,
                 alpha=alpha,
+                calibration_params=calib,
             )
 
             comm_time = 0.0
@@ -303,16 +330,25 @@ class DynamicPartitioner:
                 prev_n = assignments[-1].node
                 rtt = rtt_matrix.get((prev_n.node_id, n.node_id), 1.0)
                 bw = bw_matrix.get((prev_n.node_id, n.node_id), 1000.0)
+                cut_layer = layers[start_l - 1]
+                t_bytes = cut_layer.output_tensor_bytes
+                cut_h = cut_layer.output_shape[2] if (cut_layer.output_shape and len(cut_layer.output_shape) > 2) else (cut_layer.output_shape[-1] if cut_layer.output_shape else 2048)
+                cut_d = getattr(cut_layer, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
-                    layers[start_l - 1].output_tensor_bytes, prev_n, n, rtt, bw, batch_size=batch_size
+                    t_bytes, prev_n, n, rtt, bw,
+                    batch_size=batch_size, seq_len=prompt_len,
+                    hidden_size=cut_h, dtype_bytes=cut_d,
+                    calibration_params=calib,
                 )
 
-            ws_mb = self.cost_calc.calculate_working_set_mb(
-                layers, start_l, end_l,
+            footprint = self.cost_calc.calculate_stage_memory_footprint(
+                layers, start_l, end_l, n,
+                total_layers=N,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb
+                alpha=alpha, runtime_reserve_mb=runtime_reserve_mb,
             )
+            ws_mb = footprint.total_stage_memory_mb
 
             assignments.append(
                 SliceAssignment(
@@ -378,11 +414,13 @@ class DynamicPartitioner:
         runtime_reserve_mb: float = 0.0,
         phase: str = "prefill",
         alpha: float = 0.90,
+        calibration_params: Optional[Any] = None,
     ) -> Tuple[List[SliceAssignment], float]:
         """
         Measured Oracle: Performs exhaustive search across ALL possible contiguous cut points
         (p_0 <= p_1 <= ... <= p_K = N) to determine the absolute minimal latency partition.
         """
+        effective_calib = calibration_params if calibration_params is not None else self.calibration_params
         N = len(layers)
         K = len(nodes)
         rtt_matrix = rtt_matrix or {}
@@ -426,6 +464,7 @@ class DynamicPartitioner:
                     alpha=alpha,
                     cached_weights_mb=w_cached,
                     cached_linear_flops=f_cached,
+                    calibration_params=effective_calib,
                 )
                 if c_time == float("inf"):
                     feasible = False
@@ -436,8 +475,14 @@ class DynamicPartitioner:
                     prev_node = nodes[prev_active]
                     rtt = rtt_matrix.get((prev_node.node_id, nodes[s].node_id), 1.0)
                     bw = bw_matrix.get((prev_node.node_id, nodes[s].node_id), 1000.0)
+                    cut_l = layers[start_l - 1]
+                    cut_h = cut_l.output_shape[2] if (cut_l.output_shape and len(cut_l.output_shape) > 2) else (cut_l.output_shape[-1] if cut_l.output_shape else 2048)
+                    cut_d = getattr(cut_l, "dtype_bytes", 2.0)
                     comm_time = self.cost_calc.comm_time_ms(
-                        layers[start_l - 1].output_tensor_bytes, prev_node, nodes[s], rtt, bw, batch_size=batch_size
+                        cut_l.output_tensor_bytes, prev_node, nodes[s], rtt, bw,
+                        batch_size=batch_size, seq_len=prompt_len,
+                        hidden_size=cut_h, dtype_bytes=cut_d,
+                        calibration_params=effective_calib,
                     )
 
                 total_cost += c_time + comm_time
@@ -469,23 +514,31 @@ class DynamicPartitioner:
                 alpha=alpha,
                 cached_weights_mb=w_cached,
                 cached_linear_flops=f_cached,
+                calibration_params=effective_calib,
             )
             comm_time = 0.0
             if len(assignments) > 0 and start_l > 0:
                 prev_n = assignments[-1].node
                 rtt = rtt_matrix.get((prev_n.node_id, n.node_id), 1.0)
                 bw = bw_matrix.get((prev_n.node_id, n.node_id), 1000.0)
+                cut_l = layers[start_l - 1]
+                cut_h = cut_l.output_shape[2] if (cut_l.output_shape and len(cut_l.output_shape) > 2) else (cut_l.output_shape[-1] if cut_l.output_shape else 2048)
+                cut_d = getattr(cut_l, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
-                    layers[start_l - 1].output_tensor_bytes, prev_n, n, rtt, bw, batch_size=batch_size
+                    cut_l.output_tensor_bytes, prev_n, n, rtt, bw,
+                    batch_size=batch_size, seq_len=prompt_len,
+                    hidden_size=cut_h, dtype_bytes=cut_d,
+                    calibration_params=effective_calib,
                 )
 
-            ws_mb = self.cost_calc.calculate_working_set_mb(
-                layers, start_l, end_l,
+            footprint = self.cost_calc.calculate_stage_memory_footprint(
+                layers, start_l, end_l, n,
+                total_layers=N,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
-                runtime_reserve_mb=runtime_reserve_mb,
-                cached_weights_mb=w_cached,
+                alpha=alpha, runtime_reserve_mb=runtime_reserve_mb,
             )
+            ws_mb = footprint.total_stage_memory_mb
 
             assignments.append(
                 SliceAssignment(
@@ -581,6 +634,7 @@ class DynamicPartitioner:
         concurrency: int,
         runtime_reserve_mb: float,
         alpha: float,
+        calibration_params: Optional[Any] = None,
     ) -> array:
         """
         Memoizes c(a, b, v), the cost of running layers [a..b] on nodes[v], flattened as
@@ -615,6 +669,7 @@ class DynamicPartitioner:
                         alpha=alpha,
                         cached_weights_mb=pref_weights[b + 1] - pref_weights[a],
                         cached_linear_flops=pref_flops[b + 1] - pref_flops[a],
+                        calibration_params=calibration_params,
                     )
                     if cost == INF:
                         break
@@ -628,6 +683,8 @@ class DynamicPartitioner:
         rtt_matrix: Dict[Tuple[str, str], float],
         bw_matrix: Dict[Tuple[str, str], float],
         batch_size: int,
+        prompt_len: int = 1,
+        calibration_params: Optional[Any] = None,
     ) -> array:
         """
         Memoizes w(p, u, v), the cost of shipping the activation produced by layer p from
@@ -640,6 +697,8 @@ class DynamicPartitioner:
 
         for p in range(N - 1):
             tensor_bytes = layers[p].output_tensor_bytes
+            hidden_sz = layers[p].output_shape[2] if (layers[p].output_shape and len(layers[p].output_shape) > 2) else (layers[p].output_shape[-1] if layers[p].output_shape else 2048)
+            dtype_sz = getattr(layers[p], "dtype_bytes", 2.0)
             for u in range(K):
                 for v in range(K):
                     if u == v:
@@ -647,7 +706,10 @@ class DynamicPartitioner:
                     rtt = rtt_matrix.get((nodes[u].node_id, nodes[v].node_id), 1.0)
                     bw = bw_matrix.get((nodes[u].node_id, nodes[v].node_id), 1000.0)
                     W[(p * K + u) * K + v] = self.cost_calc.comm_time_ms(
-                        tensor_bytes, nodes[u], nodes[v], rtt, bw, batch_size=batch_size
+                        tensor_bytes, nodes[u], nodes[v], rtt, bw,
+                        batch_size=batch_size, seq_len=prompt_len,
+                        hidden_size=hidden_sz, dtype_bytes=dtype_sz,
+                        calibration_params=calibration_params,
                     )
         return W
 
@@ -666,6 +728,7 @@ class DynamicPartitioner:
         alpha: float = 0.90,
         objective: str = "sum",
         max_subset_nodes: int = 12,
+        calibration_params: Optional[Any] = None,
     ) -> Tuple[List[SliceAssignment], float]:
         """
         Exact subset DP over node sets. Returns (assignments, optimal_objective_value).
@@ -733,14 +796,19 @@ class DynamicPartitioner:
         INF = float("inf")
         use_sum = (objective == "sum")
 
+        calib = calibration_params or self.calibration_params
         pref_weights, pref_flops = self._layer_prefix_sums(layers)
         C = self._precompute_stage_costs(
             layers, nodes, pref_weights, pref_flops,
             phase=phase, prompt_len=prompt_len, max_seq_len=max_seq_len,
             batch_size=batch_size, concurrency=concurrency,
             runtime_reserve_mb=runtime_reserve_mb, alpha=alpha,
+            calibration_params=calib,
         )
-        W = self._precompute_link_costs(layers, nodes, rtt_matrix, bw_matrix, batch_size)
+        W = self._precompute_link_costs(
+            layers, nodes, rtt_matrix, bw_matrix, batch_size,
+            prompt_len=prompt_len, calibration_params=calib,
+        )
 
         n_states = (1 << K) * K * N
         dp = array("d", [INF]) * n_states
@@ -831,14 +899,18 @@ class DynamicPartitioner:
                 prev_idx = raw_assignments[pos - 1][2]
                 comm_time = W[((start_l - 1) * K + prev_idx) * K + node_idx]
 
-            ws_mb = self.cost_calc.calculate_working_set_mb(
+            footprint = self.cost_calc.calculate_stage_memory_footprint(
                 layers, start_l, end_l,
-                prompt_len=prompt_len, max_seq_len=max_seq_len,
-                batch_size=batch_size, concurrency=concurrency,
+                node=node,
+                total_layers=N,
+                prompt_len=prompt_len,
+                max_seq_len=max_seq_len,
+                batch_size=batch_size,
+                concurrency=concurrency,
+                alpha=alpha,
                 runtime_reserve_mb=runtime_reserve_mb,
-                device_type=self._node_device_type(node),
-                cached_weights_mb=pref_weights[end_l + 1] - pref_weights[start_l],
             )
+            ws_mb = footprint.total_stage_memory_mb
 
             assignments.append(
                 SliceAssignment(
@@ -870,6 +942,7 @@ class DynamicPartitioner:
         alpha: float = 0.90,
         objective: str = "sum",
         max_subset_nodes: int = 12,
+        calibration_params: Optional[Any] = None,
     ) -> List[SliceAssignment]:
         """
         Drop-in replacement for partition() backed by the exact subset DP, so the node
@@ -877,13 +950,14 @@ class DynamicPartitioner:
         See solve_subset_dp() for the recurrence; as with partition(), a non-empty
         `ratios` short-circuits to operator-specified ratio cutting.
         """
+        effective_calib = calibration_params if calibration_params is not None else self.calibration_params
         if ratios is not None and len(ratios) > 0:
             return self.partition_by_ratio(
                 layers, nodes, ratios, rtt_matrix, bw_matrix,
                 prompt_len=prompt_len, max_seq_len=max_seq_len,
                 batch_size=batch_size, concurrency=concurrency,
                 runtime_reserve_mb=runtime_reserve_mb, phase=phase,
-                alpha=alpha
+                alpha=alpha, calibration_params=effective_calib,
             )
 
         assignments, _ = self.solve_subset_dp(
@@ -894,6 +968,7 @@ class DynamicPartitioner:
             runtime_reserve_mb=runtime_reserve_mb, phase=phase,
             alpha=alpha, objective=objective,
             max_subset_nodes=max_subset_nodes,
+            calibration_params=effective_calib,
         )
         return assignments
 

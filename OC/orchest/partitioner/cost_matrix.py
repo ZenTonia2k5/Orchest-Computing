@@ -403,6 +403,7 @@ class PartitionCostCalculator:
         cls,
         device_type: str = "cuda",
         custom_overhead_mb: Optional[float] = None,
+        available_mb: Optional[float] = None,
     ) -> float:
         """
         Returns framework and runtime base context memory overhead (CUDA driver context, Metal heap, etc.).
@@ -410,7 +411,11 @@ class PartitionCostCalculator:
         if custom_overhead_mb is not None:
             return float(max(custom_overhead_mb, 0.0))
         norm_dev = (device_type or "cuda").lower()
-        return cls.FRAMEWORK_RUNTIME_DEFAULTS.get(norm_dev, 100.0)
+        default_overhead = cls.FRAMEWORK_RUNTIME_DEFAULTS.get(norm_dev, 100.0)
+        if available_mb is not None and available_mb > 0:
+            # Scale proportionally for tiny mock/embedded devices with < 3 GB memory
+            return min(default_overhead, max(available_mb * 0.10, 10.0))
+        return default_overhead
 
     @classmethod
     def estimate_allocator_overhead_mb(
@@ -574,9 +579,11 @@ class PartitionCostCalculator:
         )
 
         # 4. Framework / Runtime base overhead
+        raw_avail = cls.get_node_available_memory_mb(node)
         m_runtime = cls.estimate_framework_runtime_overhead_mb(
             device_type=node_dev,
             custom_overhead_mb=runtime_reserve_mb if runtime_reserve_mb > 0 else None,
+            available_mb=raw_avail,
         )
 
         # 5. Allocator Fragmentation Overhead
@@ -673,12 +680,14 @@ class PartitionCostCalculator:
         total_flops = linear_flops + attn_quadratic_flops
 
         base_speed = cls.get_node_compute_speed(node)  # TFLOPs/sec
+        compute_sec = (total_flops / 1e12) / max(base_speed, 1e-4)
         if calibrated_speed_factor is not None and calibrated_speed_factor > 0:
-            effective_speed = base_speed * calibrated_speed_factor
+            # gamma_compute = t_meas / t_theo, scaling the theoretical compute latency
+            compute_sec *= calibrated_speed_factor
+            effective_speed = base_speed / calibrated_speed_factor
         else:
             effective_speed = base_speed
 
-        compute_sec = (total_flops / 1e12) / max(effective_speed, 1e-4)
         compute_ms = compute_sec * 1000.0
 
         return {
@@ -695,22 +704,31 @@ class PartitionCostCalculator:
     @classmethod
     def compute_activation_comm_cost_ms(
         cls,
-        node_from: NodeMetrics,
-        node_to: NodeMetrics,
-        hidden_size: int,
+        node_from: Optional[NodeMetrics] = None,
+        node_to: Optional[NodeMetrics] = None,
+        hidden_size: int = 2048,
         seq_len: int = 1,
         batch_size: int = 1,
         dtype_bytes: Union[int, float] = 2,
         rtt_ms: float = 1.0,
         bandwidth_mbps: float = 1000.0,
         include_staging_overhead: bool = True,
+        calibration_params: Optional[Any] = None,
+        activation_bytes: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Calculates activation tensor network communication latency between two nodes:
-        T_comm = (RTT / 2) + (payload_bytes * 8 / Bandwidth) + T_staging (D2H + Socket + H2D)
+        Calculates activation tensor network communication latency between two nodes using the complete 6-term model:
+        T_comm = T_sync + T_D2H + T_encode + T_network + T_decode + T_H2D
+        where:
+          T_network = (RTT / 2) + (payload_bytes * 8 / Bandwidth)
+          T_sync = stream/accelerator synchronization latency
+          T_D2H = Device to Host RAM PCIe egress transfer
+          T_encode = tensor serialization & packet framing
+          T_decode = packet deserialization & verification
+          T_H2D = Host to Device RAM PCIe ingress transfer
         If node_from == node_to, communication cost is 0.0 ms.
         """
-        if node_from.node_id == node_to.node_id:
+        if node_from is not None and node_to is not None and node_from.node_id == node_to.node_id:
             return {
                 "total_comm_ms": 0.0,
                 "network_transfer_ms": 0.0,
@@ -718,25 +736,74 @@ class PartitionCostCalculator:
                 "staging_overhead_ms": 0.0,
                 "payload_bytes": 0,
                 "payload_mb": 0.0,
+                "six_terms": {
+                    "t_sync_ms": 0.0,
+                    "t_d2h_ms": 0.0,
+                    "t_encode_ms": 0.0,
+                    "t_network_ms": 0.0,
+                    "t_decode_ms": 0.0,
+                    "t_h2d_ms": 0.0,
+                },
             }
 
         b = max(batch_size, 1)
         s = max(seq_len, 1)
         h = max(hidden_size, 1)
 
-        payload_bytes = int(b * s * h * dtype_bytes)
+        if activation_bytes is not None:
+            payload_bytes = int(activation_bytes)
+        else:
+            payload_bytes = int(b * s * h * dtype_bytes)
         payload_mb = payload_bytes / (1024.0 * 1024.0)
 
         bw = max(bandwidth_mbps, 1.0)
         transfer_sec = (payload_bytes * 8.0 / 1e6) / bw
         network_transfer_ms = transfer_sec * 1000.0
-
         rtt_delay_ms = max(rtt_ms, 0.05) / 2.0
+        t_network_ms = rtt_delay_ms + network_transfer_ms
 
-        # Memory copy / PCIe staging overhead (assuming ~2000 MB/s D2H + H2D bandwidth)
-        staging_overhead_ms = (payload_mb / 2000.0) * 1000.0 if include_staging_overhead else 0.0
+        if not include_staging_overhead:
+            return {
+                "total_comm_ms": round(t_network_ms, 3),
+                "network_transfer_ms": round(network_transfer_ms, 3),
+                "rtt_delay_ms": round(rtt_delay_ms, 3),
+                "staging_overhead_ms": 0.0,
+                "payload_bytes": payload_bytes,
+                "payload_mb": round(payload_mb, 4),
+                "six_terms": {
+                    "t_sync_ms": 0.0,
+                    "t_d2h_ms": 0.0,
+                    "t_encode_ms": 0.0,
+                    "t_network_ms": round(t_network_ms, 3),
+                    "t_decode_ms": 0.0,
+                    "t_h2d_ms": 0.0,
+                },
+            }
 
-        total_comm_ms = rtt_delay_ms + network_transfer_ms + staging_overhead_ms
+        has_gpu_src = (bool(node_from.gpus) or getattr(node_from, "device_type", "cpu") in ("cuda", "mps")) if node_from is not None else False
+        has_gpu_dst = (bool(node_to.gpus) or getattr(node_to, "device_type", "cpu") in ("cuda", "mps")) if node_to is not None else False
+
+        if calibration_params is not None:
+            slope = getattr(calibration_params, "comm_staging_slope_ms_per_mb", 0.5)
+            intercept = getattr(calibration_params, "comm_staging_intercept_ms", 0.05)
+
+            t_sync_ms = 0.5 * intercept if has_gpu_src else 0.0
+            t_d2h_ms = 0.40 * slope * payload_mb if has_gpu_src else 0.0
+            t_encode_ms = 0.15 * slope * payload_mb + 0.25 * intercept
+            t_decode_ms = 0.15 * slope * payload_mb + 0.25 * intercept
+            t_h2d_ms = 0.30 * slope * payload_mb if has_gpu_dst else 0.0
+            staging_overhead_ms = t_sync_ms + t_d2h_ms + t_encode_ms + t_decode_ms + t_h2d_ms
+        else:
+            # Baseline theoretical model: staging overhead ~0.5 ms/MB (2000 MB/s effective)
+            staging_rate_ms = (payload_mb / 2000.0) * 1000.0
+            t_sync_ms = 0.05 if has_gpu_src else 0.0
+            t_d2h_ms = 0.35 * staging_rate_ms if has_gpu_src else 0.0
+            t_encode_ms = 0.15 * staging_rate_ms
+            t_decode_ms = 0.15 * staging_rate_ms
+            t_h2d_ms = 0.35 * staging_rate_ms if has_gpu_dst else 0.0
+            staging_overhead_ms = t_sync_ms + t_d2h_ms + t_encode_ms + t_decode_ms + t_h2d_ms
+
+        total_comm_ms = t_network_ms + staging_overhead_ms
 
         return {
             "total_comm_ms": round(total_comm_ms, 3),
@@ -745,6 +812,14 @@ class PartitionCostCalculator:
             "staging_overhead_ms": round(staging_overhead_ms, 3),
             "payload_bytes": payload_bytes,
             "payload_mb": round(payload_mb, 4),
+            "six_terms": {
+                "t_sync_ms": round(t_sync_ms, 3),
+                "t_d2h_ms": round(t_d2h_ms, 3),
+                "t_encode_ms": round(t_encode_ms, 3),
+                "t_network_ms": round(t_network_ms, 3),
+                "t_decode_ms": round(t_decode_ms, 3),
+                "t_h2d_ms": round(t_h2d_ms, 3),
+            },
         }
 
     @classmethod
@@ -1136,10 +1211,12 @@ class PartitionCostCalculator:
         backend_workspace_mb: Optional[float] = None,
         include_backend_workspace: bool = True,
         cached_weights_mb: Optional[float] = None,
+        include_full_footprint: bool = True,
+        node: Optional[NodeMetrics] = None,
     ) -> float:
         """
         Calculates total model working set for layers [start_idx..end_idx]:
-        M_working = M_weights + M_transient + M_kv_cache + M_runtime_reserve
+        M_working = M_weights + M_transient + M_kv_cache + M_runtime + M_allocator
         """
         sub_layers = layers[start_idx : end_idx + 1]
         if not sub_layers:
@@ -1183,6 +1260,20 @@ class PartitionCostCalculator:
             dtype_bytes=effective_dtype,
         )
 
+        active_memory = m_weights + m_transient + m_kv_cache
+        if include_full_footprint:
+            raw_avail = cls.get_node_available_memory_mb(node) if node is not None else None
+            m_runtime = cls.estimate_framework_runtime_overhead_mb(
+                device_type=device_type,
+                custom_overhead_mb=runtime_reserve_mb if runtime_reserve_mb > 0 else None,
+                available_mb=raw_avail,
+            )
+            m_allocator = cls.estimate_allocator_overhead_mb(
+                base_memory_mb=active_memory,
+                fragmentation_factor=0.05,
+            )
+            return round(active_memory + m_runtime + m_allocator, 2)
+
         return m_weights + m_transient + m_kv_cache + runtime_reserve_mb
 
     @classmethod
@@ -1203,47 +1294,45 @@ class PartitionCostCalculator:
         num_kv_heads: Optional[int] = None,
         cached_weights_mb: Optional[float] = None,
         cached_linear_flops: Optional[float] = None,
+        calibration_params: Optional[Any] = None,
     ) -> float:
         """
         Calculates execution time in milliseconds to compute layers[start_idx : end_idx] on a given node.
-        Enforces configurable hard memory constraint: M_stage(k,i,j) <= alpha * M_usable(k).
-        Returns float('inf') if Model Working Set exceeds alpha * usable memory.
+        Enforces configurable hard memory constraint: M_stage(k,i,j) <= alpha * M_usable(k)
+        using the complete stage memory footprint model:
+        M_stage = M_weights + M_kv_cache + M_transient + M_workspace + M_transport + M_runtime + M_allocator
+        Returns float('inf') if Stage Memory Footprint exceeds alpha * usable memory.
         """
         sub_layers = layers[start_idx : end_idx + 1]
         num_sub_layers = len(sub_layers)
         if num_sub_layers == 0:
             return 0.0
 
-        # Detect node device type for accurate backend workspace sizing
-        node_dev = "cpu"
-        if node.gpus:
-            best_gpu = max(node.gpus, key=lambda g: g.vram_free_mb)
-            node_dev = best_gpu.device_type
-
-        total_working_set_mb = cls.calculate_working_set_mb(
+        # Enforce full stage memory footprint constraint
+        footprint = cls.calculate_stage_memory_footprint(
             layers=layers,
             start_idx=start_idx,
             end_idx=end_idx,
+            node=node,
+            total_layers=len(layers),
             prompt_len=prompt_len,
             max_seq_len=max_seq_len,
             batch_size=batch_size,
             concurrency=concurrency,
+            alpha=alpha,
             runtime_reserve_mb=runtime_reserve_mb,
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
-            device_type=node_dev,
-            cached_weights_mb=cached_weights_mb,
         )
 
-        # Hard memory constraint check: M_stage <= alpha * M_usable
-        is_feasible, _ = cls.check_memory_feasibility(
-            stage_memory_mb=total_working_set_mb,
-            node=node,
-            alpha=alpha,
-            runtime_reserve_mb=runtime_reserve_mb,
-        )
-        if not is_feasible:
+        eff_mem = footprint.total_stage_memory_mb
+        if calibration_params and getattr(calibration_params, "memory_scaling_factor", 1.0) != 1.0:
+            eff_mem *= calibration_params.memory_scaling_factor
+
+        if not footprint.is_feasible or eff_mem > footprint.safety_ceiling_mb:
             return float("inf")
+
+        calib_speed = getattr(calibration_params, "compute_scaling_factor", None) if calibration_params else None
 
         if phase == "prefill":
             # Prefill phase: Compute-bound, FLOPs scale with prompt length
@@ -1256,6 +1345,7 @@ class PartitionCostCalculator:
                 batch_size=batch_size,
                 num_heads=num_heads,
                 cached_linear_flops=cached_linear_flops,
+                calibrated_speed_factor=calib_speed,
             )
             return prefill_info["compute_ms"]
         else:
@@ -1271,29 +1361,65 @@ class PartitionCostCalculator:
             tflops_speed = cls.get_node_compute_speed(node)
             effective_flops = total_flops_per_token * max(batch_size, 1)
             compute_sec = mem_read_sec + ((effective_flops / 1e12) / tflops_speed)
+            if calib_speed and calib_speed > 0:
+                compute_sec *= calib_speed
 
             return compute_sec * 1000.0  # Convert to ms
 
     @classmethod
     def comm_time_ms(
         cls,
-        output_tensor_bytes: int,
+        output_tensor_bytes: Union[int, Any],
         node_from: NodeMetrics,
         node_to: NodeMetrics,
         rtt_ms: float = 1.0,
         bandwidth_mbps: float = 1000.0,
         batch_size: int = 1,
+        seq_len: int = 1,
+        hidden_size: Optional[int] = None,
+        dtype_bytes: Optional[float] = None,
+        include_staging_overhead: bool = True,
+        calibration_params: Optional[Any] = None,
     ) -> float:
         """
-        Calculates activation tensor network transfer time in milliseconds between two nodes.
-        If node_from == node_to, network cost is 0.
+        Calculates activation tensor network communication latency between two nodes.
+        Enforces the complete 6-term communication model and scales payload by prompt length.
         """
         if node_from.node_id == node_to.node_id:
             return 0.0
 
-        # Total payload bytes = output_tensor_bytes * batch_size
-        payload_bytes = output_tensor_bytes * max(batch_size, 1)
-        bw = max(bandwidth_mbps, 1.0)
-        transfer_sec = (payload_bytes * 8.0 / 1e6) / bw
-        total_ms = (max(rtt_ms, 0.05) / 2.0) + (transfer_sec * 1000.0)
-        return total_ms
+        eff_dtype = dtype_bytes if dtype_bytes is not None else 2.0
+        eff_hidden = hidden_size
+        act_bytes = None
+
+        if hasattr(output_tensor_bytes, "get_output_tensor_bytes"):
+            layer = output_tensor_bytes
+            eff_dtype = getattr(layer, "dtype_bytes", eff_dtype)
+            if eff_hidden is None and hasattr(layer, "output_shape") and layer.output_shape:
+                eff_hidden = layer.output_shape[-1]
+            act_bytes = layer.get_output_tensor_bytes(seq_len=seq_len, batch_size=batch_size)
+        elif isinstance(output_tensor_bytes, (int, float)):
+            if eff_hidden is None:
+                eff_hidden = int(output_tensor_bytes / max(eff_dtype, 0.5))
+            if seq_len > 1:
+                act_bytes = int(max(batch_size, 1) * seq_len * eff_hidden * eff_dtype)
+            else:
+                act_bytes = int(output_tensor_bytes)
+
+        if eff_hidden is None:
+            eff_hidden = 2048
+
+        comm_res = cls.compute_activation_comm_cost_ms(
+            node_from=node_from,
+            node_to=node_to,
+            hidden_size=eff_hidden,
+            seq_len=seq_len,
+            batch_size=batch_size,
+            dtype_bytes=eff_dtype,
+            activation_bytes=act_bytes,
+            rtt_ms=rtt_ms,
+            bandwidth_mbps=bandwidth_mbps,
+            include_staging_overhead=include_staging_overhead,
+            calibration_params=calibration_params,
+        )
+        return float(comm_res["total_comm_ms"])
