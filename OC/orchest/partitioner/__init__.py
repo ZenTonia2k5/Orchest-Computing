@@ -1,5 +1,6 @@
 from .dynamic_programming import DynamicPartitioner, SliceAssignment
 from .cost_matrix import PartitionCostCalculator
+from .baselines import PartitionBaselines
 from .cost_calibrator import CostModelCalibrator, CalibrationParameters
 from .eval_metrics import (
     AlgorithmicEvaluationResult,
@@ -13,6 +14,7 @@ __all__ = [
     "DynamicPartitioner",
     "SliceAssignment",
     "PartitionCostCalculator",
+    "PartitionBaselines",
     "CostModelCalibrator",
     "CalibrationParameters",
     "AlgorithmicEvaluationResult",

@@ -35,6 +35,7 @@ class PartitionEvaluationResult:
     relative_regret_pct: Optional[float] = None
     prediction_mape_pct: Optional[float] = None
     prediction_rmse_ms: Optional[float] = None
+    notes: Optional[str] = None
 
 
 class DynamicPartitioner:
@@ -120,6 +121,7 @@ class DynamicPartitioner:
                 alpha=alpha,
                 cached_weights_mb=w_cached,
                 cached_linear_flops=f_cached,
+                calibration_params=calib,
             )
             if c_time != float("inf"):
                 dp[0][i] = c_time
