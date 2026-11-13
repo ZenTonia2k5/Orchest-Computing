@@ -97,6 +97,3 @@ OC/held_out_evaluation_results.json
 /models/
 !/OC/orchest/models/
 *.safetensors
-
-# Locally generated TLS / CurveZMQ material (run OC/scripts/generate_certs.py)
-OC/certs/
