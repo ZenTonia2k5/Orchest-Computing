@@ -158,7 +158,7 @@ class DynamicPartitioner:
                     d_sz = getattr(prev_layer, "dtype_bytes", 2.0)
                     comm_time = self.cost_calc.comm_time_ms(
                         tensor_bytes, prev_node, node_s, rtt, bw,
-                        batch_size=batch_size, seq_len=prompt_len,
+                        batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                         hidden_size=h_sz, dtype_bytes=d_sz,
                         calibration_params=calib,
                     )
@@ -225,7 +225,7 @@ class DynamicPartitioner:
                 cut_d = getattr(cut_layer, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
                     t_bytes, prev_n, n, rtt, bw,
-                    batch_size=batch_size, seq_len=prompt_len,
+                    batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                     hidden_size=cut_h, dtype_bytes=cut_d,
                     calibration_params=calib,
                 )
@@ -336,7 +336,7 @@ class DynamicPartitioner:
                 cut_d = getattr(cut_layer, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
                     t_bytes, prev_n, n, rtt, bw,
-                    batch_size=batch_size, seq_len=prompt_len,
+                    batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                     hidden_size=cut_h, dtype_bytes=cut_d,
                     calibration_params=calib,
                 )
@@ -480,7 +480,7 @@ class DynamicPartitioner:
                     cut_d = getattr(cut_l, "dtype_bytes", 2.0)
                     comm_time = self.cost_calc.comm_time_ms(
                         cut_l.output_tensor_bytes, prev_node, nodes[s], rtt, bw,
-                        batch_size=batch_size, seq_len=prompt_len,
+                        batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                         hidden_size=cut_h, dtype_bytes=cut_d,
                         calibration_params=effective_calib,
                     )
@@ -526,7 +526,7 @@ class DynamicPartitioner:
                 cut_d = getattr(cut_l, "dtype_bytes", 2.0)
                 comm_time = self.cost_calc.comm_time_ms(
                     cut_l.output_tensor_bytes, prev_n, n, rtt, bw,
-                    batch_size=batch_size, seq_len=prompt_len,
+                    batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                     hidden_size=cut_h, dtype_bytes=cut_d,
                     calibration_params=effective_calib,
                 )
@@ -598,6 +598,14 @@ class DynamicPartitioner:
     # ------------------------------------------------------------------
     # Assignment-optimal Subset DP (Held-Karp style, over node subsets)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _activation_seq_len(phase: str, prompt_len: int) -> int:
+        """
+        Tokens carried by the activation crossing a stage boundary: the whole prompt
+        during prefill, one token per decode step.
+        """
+        return max(int(prompt_len), 1) if phase == "prefill" else 1
 
     @staticmethod
     def _node_device_type(node: NodeMetrics) -> str:
@@ -685,6 +693,7 @@ class DynamicPartitioner:
         batch_size: int,
         prompt_len: int = 1,
         calibration_params: Optional[Any] = None,
+        phase: str = "prefill",
     ) -> array:
         """
         Memoizes w(p, u, v), the cost of shipping the activation produced by layer p from
@@ -707,7 +716,7 @@ class DynamicPartitioner:
                     bw = bw_matrix.get((nodes[u].node_id, nodes[v].node_id), 1000.0)
                     W[(p * K + u) * K + v] = self.cost_calc.comm_time_ms(
                         tensor_bytes, nodes[u], nodes[v], rtt, bw,
-                        batch_size=batch_size, seq_len=prompt_len,
+                        batch_size=batch_size, seq_len=self._activation_seq_len(phase, prompt_len),
                         hidden_size=hidden_sz, dtype_bytes=dtype_sz,
                         calibration_params=calibration_params,
                     )
@@ -807,7 +816,7 @@ class DynamicPartitioner:
         )
         W = self._precompute_link_costs(
             layers, nodes, rtt_matrix, bw_matrix, batch_size,
-            prompt_len=prompt_len, calibration_params=calib,
+            prompt_len=prompt_len, calibration_params=calib, phase=phase,
         )
 
         n_states = (1 << K) * K * N

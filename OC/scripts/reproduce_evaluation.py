@@ -6,7 +6,7 @@ Reproduce and verify evaluation metrics:
 3. Separation of the three scientific dimensions:
    - Algorithmic Regret (Solver discrete optimization vs Exhaustive Oracle).
    - Prediction Error (Theoretical cost model vs Real profiler latency).
-   - Physical Regret (Execution penalty on physical hardware).
+   - Physical Regret (Execution penalty on physical hardware; only reported from real measurements).
 
 Historical Note on MAPE 3.82%:
 The previously reported 3.82% MAPE with 95% CI [3.10%, 4.54%] originated from
@@ -21,7 +21,7 @@ import sys
 import os
 import json
 import argparse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Ensure project root is on PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -47,7 +47,11 @@ def test_data_leakage_enforcement(heldout_data: Dict[str, Any]) -> bool:
         return True
 
 
-def run_reproduction(profile_path: str = "OC/hardware_profile.json", output_json: str = "OC/evaluation_report.json"):
+def run_reproduction(
+    profile_path: str = "OC/hardware_profile.json",
+    output_json: str = "OC/evaluation_report.json",
+    physical_path: Optional[str] = None,
+):
     print("=" * 80)
     print("           ORCHEST EVALUATION & REPRODUCIBILITY SUITE           ")
     print("=" * 80)
@@ -123,13 +127,32 @@ def run_reproduction(profile_path: str = "OC/hardware_profile.json", output_json
     print(f"   -> Raw Algorithmic Regret:      {algo_result.raw_regret_ms} ms (Optimal: {algo_result.is_optimal})")
     print(f"   -> Discrepancy Flag:            {algo_result.has_negative_discrepancy}")
 
-    # 6. Physical Regret Evaluation (Simulated physical cluster runs)
-    print("\n6. Evaluating Physical Regret Concept...")
-    # Example cluster measurement: chosen partition took 42.5 ms, empirical best took 41.8 ms
-    phys_result = evaluate_physical_regret(chosen_measured_ms=42.5, empirical_best_measured_ms=41.8)
-    print(f"   -> Chosen Partition Measured:   {phys_result.chosen_partition_measured_ms} ms")
-    print(f"   -> Empirical Best Measured:     {phys_result.empirical_best_measured_ms} ms")
-    print(f"   -> Raw Physical Regret:         {phys_result.raw_regret_ms} ms ({phys_result.relative_regret_pct}%)")
+    # 6. Physical Regret Evaluation
+    # Only real cluster measurements are accepted here. Without them the report states
+    # that physical regret was not measured instead of carrying placeholder numbers.
+    print("\n6. Evaluating Physical Regret...")
+    physical_section: Dict[str, Any]
+    if physical_path:
+        with open(physical_path, "r", encoding="utf-8") as f:
+            phys_data = json.load(f)
+        phys_result = evaluate_physical_regret(
+            chosen_measured_ms=float(phys_data["chosen_partition_measured_ms"]),
+            empirical_best_measured_ms=float(phys_data["empirical_best_measured_ms"]),
+        )
+        physical_section = {
+            "status": "measured",
+            "source": physical_path,
+            **phys_result.to_dict(),
+        }
+        print(f"   -> Chosen Partition Measured:   {phys_result.chosen_partition_measured_ms} ms")
+        print(f"   -> Empirical Best Measured:     {phys_result.empirical_best_measured_ms} ms")
+        print(f"   -> Raw Physical Regret:         {phys_result.raw_regret_ms} ms ({phys_result.relative_regret_pct}%)")
+    else:
+        physical_section = {
+            "status": "not_measured",
+            "reason": "No physical cluster measurements supplied (--physical-measurements).",
+        }
+        print("   -> Not measured: pass --physical-measurements <json> with real cluster timings.")
 
     # 7. Compile and export JSON report
     report = {
@@ -145,7 +168,7 @@ def run_reproduction(profile_path: str = "OC/hardware_profile.json", output_json
             "per_model_calibration": model_eval,
         },
         "algorithmic_optimality": algo_result.to_dict(),
-        "physical_regret_concept": phys_result.to_dict(),
+        "physical_regret": physical_section,
         "historical_reproduction_notes": {
             "historical_reported_mape": "3.82% (CI: [3.10%, 4.54%])",
             "historical_mechanism": "Synthetic Gaussian noise random.gauss(0, 0.02) over repeated simulated runs",
@@ -167,6 +190,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Reproduce Orchest cost model calibration and regret metrics.")
     parser.add_argument("--profile", default="OC/hardware_profile.json", help="Path to input hardware profile JSON")
     parser.add_argument("--output", default="OC/evaluation_report.json", help="Path to export report JSON")
+    parser.add_argument(
+        "--physical-measurements",
+        default=None,
+        help="JSON with measured 'chosen_partition_measured_ms' and 'empirical_best_measured_ms' from a real cluster run",
+    )
     args = parser.parse_args()
 
-    run_reproduction(args.profile, args.output)
+    run_reproduction(args.profile, args.output, args.physical_measurements)

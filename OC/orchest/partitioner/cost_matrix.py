@@ -1325,11 +1325,16 @@ class PartitionCostCalculator:
             num_kv_heads=num_kv_heads,
         )
 
-        eff_mem = footprint.total_stage_memory_mb
-        if calibration_params and getattr(calibration_params, "memory_scaling_factor", 1.0) != 1.0:
-            eff_mem *= calibration_params.memory_scaling_factor
+        # Calibration may only tighten the memory constraint. A fitted gamma_memory < 1
+        # would declare plans feasible that the analytic model rejects, raising the
+        # false-feasible (predicted fit, actual OOM) rate on a handful of single-layer
+        # samples, so it is clamped to 1.0 here on purpose.
+        gamma_memory = 1.0
+        if calibration_params is not None:
+            gamma_memory = max(float(getattr(calibration_params, "memory_scaling_factor", 1.0) or 1.0), 1.0)
+        eff_mem = footprint.total_stage_memory_mb * gamma_memory
 
-        if not footprint.is_feasible or eff_mem > footprint.safety_ceiling_mb:
+        if eff_mem > footprint.safety_ceiling_mb:
             return float("inf")
 
         calib_speed = getattr(calibration_params, "compute_scaling_factor", None) if calibration_params else None
@@ -1399,12 +1404,14 @@ class PartitionCostCalculator:
                 eff_hidden = layer.output_shape[-1]
             act_bytes = layer.get_output_tensor_bytes(seq_len=seq_len, batch_size=batch_size)
         elif isinstance(output_tensor_bytes, (int, float)):
-            if eff_hidden is None:
-                eff_hidden = int(output_tensor_bytes / max(eff_dtype, 0.5))
-            if seq_len > 1:
-                act_bytes = int(max(batch_size, 1) * seq_len * eff_hidden * eff_dtype)
+            b = max(batch_size, 1)
+            s = max(seq_len, 1)
+            if eff_hidden is not None:
+                act_bytes = int(b * s * eff_hidden * eff_dtype)
             else:
-                act_bytes = int(output_tensor_bytes)
+                # Legacy input: output_tensor_bytes is the per-sample, per-token payload.
+                eff_hidden = int(output_tensor_bytes / max(eff_dtype, 0.5))
+                act_bytes = int(output_tensor_bytes * b * s)
 
         if eff_hidden is None:
             eff_hidden = 2048

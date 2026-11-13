@@ -1,3 +1,4 @@
+import logging
 import socket
 import struct
 import threading
@@ -20,6 +21,97 @@ def read_zmq_key(filename: str) -> bytes:
         with open(path, "rb") as f:
             return f.read().strip()
     return b""
+
+
+# ==============================================================================
+# 0. Transport security policy (fail closed by default)
+# ==============================================================================
+
+logger = logging.getLogger("OrchestTransport")
+
+ALLOW_INSECURE_ENV = "ORCHEST_ALLOW_INSECURE_TRANSPORT"
+
+
+class InsecureTransportError(RuntimeError):
+    """Raised when secure transport cannot be established and insecure fallback is not allowed."""
+
+
+def insecure_transport_allowed() -> bool:
+    """
+    Insecure (plaintext) transport is only permitted when explicitly opted in via
+    ORCHEST_ALLOW_INSECURE_TRANSPORT=1, e.g. for local demos. Research runs that claim
+    secure execution must leave it unset so a missing or broken certificate setup fails
+    instead of silently downgrading to plaintext.
+    """
+    return os.environ.get(ALLOW_INSECURE_ENV, "0").strip().lower() in ("1", "true", "yes")
+
+
+def _handle_missing_security(component: str, detail: str) -> None:
+    if insecure_transport_allowed():
+        logger.warning(f"{component}: {detail}. Continuing WITHOUT encryption ({ALLOW_INSECURE_ENV}=1).")
+        return
+    raise InsecureTransportError(
+        f"{component}: {detail}. Refusing to fall back to insecure transport "
+        f"(set {ALLOW_INSECURE_ENV}=1 only for local demos)."
+    )
+
+
+def _cert_paths(role: str) -> Tuple[str, str, str]:
+    return (
+        os.path.join(CERTS_DIR, "ca.crt"),
+        os.path.join(CERTS_DIR, f"{role}.crt"),
+        os.path.join(CERTS_DIR, f"{role}.key"),
+    )
+
+
+def _missing_cert_files(role: str) -> list:
+    return [os.path.basename(p) for p in _cert_paths(role) if not os.path.exists(p)]
+
+
+def _build_tls_context(role: str, purpose: ssl.Purpose, component: str) -> Optional[ssl.SSLContext]:
+    """Returns an mTLS context, None when insecure mode is allowed and certs are unusable, or raises."""
+    missing = _missing_cert_files(role)
+    if missing:
+        _handle_missing_security(component, f"missing certificate files {', '.join(missing)}")
+        return None
+    ca_path, crt_path, key_path = _cert_paths(role)
+    try:
+        context = ssl.create_default_context(purpose)
+        context.load_cert_chain(certfile=crt_path, keyfile=key_path)
+        context.load_verify_locations(cafile=ca_path)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_REQUIRED
+        return context
+    except Exception as e:
+        _handle_missing_security(component, f"failed to load mTLS context ({e})")
+        return None
+
+
+def _wrap_client_socket(s: socket.socket) -> socket.socket:
+    context = _build_tls_context("worker", ssl.Purpose.SERVER_AUTH, "RawTCP client")
+    if context is None:
+        return s
+    return context.wrap_socket(s, server_hostname="host_master")
+
+
+def _read_tls_material(role: str, component: str) -> Optional[Tuple[bytes, bytes, bytes]]:
+    """Returns (ca, cert, key) bytes, None when insecure mode is allowed and certs are unusable, or raises."""
+    missing = _missing_cert_files(role)
+    if missing:
+        _handle_missing_security(component, f"missing certificate files {', '.join(missing)}")
+        return None
+    ca_path, crt_path, key_path = _cert_paths(role)
+    try:
+        with open(ca_path, "rb") as f:
+            ca = f.read()
+        with open(crt_path, "rb") as f:
+            crt = f.read()
+        with open(key_path, "rb") as f:
+            key = f.read()
+        return ca, crt, key
+    except Exception as e:
+        _handle_missing_security(component, f"failed to read mTLS material ({e})")
+        return None
 
 # ==============================================================================
 # 1. Raw TCP Sockets Transport (Default) with mTLS
@@ -52,20 +144,14 @@ class RawTCPTransportServer:
         self._server_sock.bind((self.host, self.port))
         self._server_sock.listen(128)
 
-        # Configure mTLS SSL Context
+        # Configure mTLS SSL Context (fails closed unless insecure mode is explicitly allowed)
         try:
-            ca_path = os.path.join(CERTS_DIR, "ca.crt")
-            host_crt_path = os.path.join(CERTS_DIR, "host.crt")
-            host_key_path = os.path.join(CERTS_DIR, "host.key")
-            if os.path.exists(ca_path) and os.path.exists(host_crt_path):
-                context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-                context.load_cert_chain(certfile=host_crt_path, keyfile=host_key_path)
-                context.load_verify_locations(cafile=ca_path)
-                context.verify_mode = ssl.CERT_REQUIRED
-                context.check_hostname = False
-                self.ssl_context = context
-        except Exception:
-            self.ssl_context = None
+            self.ssl_context = _build_tls_context("host", ssl.Purpose.CLIENT_AUTH, "RawTCP server")
+        except InsecureTransportError:
+            self._running = False
+            self._server_sock.close()
+            self._server_sock = None
+            raise
 
         def _accept_loop():
             while self._running:
@@ -178,20 +264,8 @@ class RawTCPTransportClient:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
 
-            # Wrap client socket with mTLS Context
-            try:
-                ca_path = os.path.join(CERTS_DIR, "ca.crt")
-                worker_crt_path = os.path.join(CERTS_DIR, "worker.crt")
-                worker_key_path = os.path.join(CERTS_DIR, "worker.key")
-                if os.path.exists(ca_path) and os.path.exists(worker_crt_path):
-                    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                    context.load_cert_chain(certfile=worker_crt_path, keyfile=worker_key_path)
-                    context.load_verify_locations(cafile=ca_path)
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_REQUIRED
-                    s = context.wrap_socket(s, server_hostname="host_master")
-            except Exception:
-                pass
+            # Wrap client socket with mTLS (raises InsecureTransportError instead of downgrading)
+            s = _wrap_client_socket(s)
 
             s.connect((target_ip, target_port))
             s.sendall(packet_bytes)
@@ -219,20 +293,8 @@ class RawTCPTransportClient:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
 
-            # Wrap client socket with mTLS Context
-            try:
-                ca_path = os.path.join(CERTS_DIR, "ca.crt")
-                worker_crt_path = os.path.join(CERTS_DIR, "worker.crt")
-                worker_key_path = os.path.join(CERTS_DIR, "worker.key")
-                if os.path.exists(ca_path) and os.path.exists(worker_crt_path):
-                    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                    context.load_cert_chain(certfile=worker_crt_path, keyfile=worker_key_path)
-                    context.load_verify_locations(cafile=ca_path)
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_REQUIRED
-                    s = context.wrap_socket(s, server_hostname="host_master")
-            except Exception:
-                pass
+            # Wrap client socket with mTLS (raises InsecureTransportError instead of downgrading)
+            s = _wrap_client_socket(s)
 
             s.connect((target_ip, target_port))
             s.sendall(packet_bytes)
@@ -297,16 +359,21 @@ class ZMQTransportServer:
             ctx = zmq.Context.instance()
             sock = ctx.socket(zmq.REP)
 
-            # Configure Curve security on server socket
-            try:
-                secret_key_bytes = read_zmq_key("host_zmq.key")
-                public_key_bytes = read_zmq_key("host_zmq.pub")
-                if secret_key_bytes and public_key_bytes:
-                    sock.curve_secretkey = secret_key_bytes
-                    sock.curve_publickey = public_key_bytes
-                    sock.curve_server = 1
-            except Exception:
-                pass
+            # Configure Curve security on server socket (fails closed unless explicitly allowed)
+            secret_key_bytes = read_zmq_key("host_zmq.key")
+            public_key_bytes = read_zmq_key("host_zmq.pub")
+            if secret_key_bytes and public_key_bytes:
+                sock.curve_secretkey = secret_key_bytes
+                sock.curve_publickey = public_key_bytes
+                sock.curve_server = 1
+            else:
+                try:
+                    _handle_missing_security("ZMQ server", "missing CurveZMQ host keys")
+                except InsecureTransportError as e:
+                    logger.error(str(e))
+                    self._running = False
+                    sock.close()
+                    return
 
             sock.bind(f"tcp://{self.host}:{self.port}")
             sock.setsockopt(zmq.RCVTIMEO, 1000)
@@ -361,17 +428,21 @@ class ZMQTransportClient:
             ctx = zmq.Context.instance()
             sock = ctx.socket(zmq.REQ)
 
-            # Configure Curve security on client socket
-            try:
-                server_public_bytes = read_zmq_key("host_zmq.pub")
-                client_secret_bytes = read_zmq_key("worker_zmq.key")
-                client_public_bytes = read_zmq_key("worker_zmq.pub")
-                if server_public_bytes and client_secret_bytes and client_public_bytes:
-                    sock.curve_serverkey = server_public_bytes
-                    sock.curve_secretkey = client_secret_bytes
-                    sock.curve_publickey = client_public_bytes
-            except Exception:
-                pass
+            # Configure Curve security on client socket (fails closed unless explicitly allowed)
+            server_public_bytes = read_zmq_key("host_zmq.pub")
+            client_secret_bytes = read_zmq_key("worker_zmq.key")
+            client_public_bytes = read_zmq_key("worker_zmq.pub")
+            if server_public_bytes and client_secret_bytes and client_public_bytes:
+                sock.curve_serverkey = server_public_bytes
+                sock.curve_secretkey = client_secret_bytes
+                sock.curve_publickey = client_public_bytes
+            else:
+                try:
+                    _handle_missing_security("ZMQ client", "missing CurveZMQ keys")
+                except InsecureTransportError as e:
+                    logger.error(str(e))
+                    sock.close()
+                    return False
 
             sock.connect(f"tcp://{target_ip}:{target_port}")
             sock.setsockopt(zmq.SNDTIMEO, int(timeout * 1000))
@@ -435,31 +506,21 @@ class GRPCTransportServer:
         servicer = GRPCTensorServicer(self.on_tensor_received_cb, self.secret_key)
         pb2_grpc.add_TensorServiceServicer_to_server(servicer, self._server)
 
-        # Configure gRPC mTLS credentials
-        secured = False
+        # Configure gRPC mTLS credentials (fails closed unless insecure mode is explicitly allowed)
         try:
-            ca_path = os.path.join(CERTS_DIR, "ca.crt")
-            host_crt_path = os.path.join(CERTS_DIR, "host.crt")
-            host_key_path = os.path.join(CERTS_DIR, "host.key")
-            if os.path.exists(ca_path) and os.path.exists(host_crt_path):
-                with open(ca_path, "rb") as f:
-                    ca_cert = f.read()
-                with open(host_key_path, "rb") as f:
-                    host_key = f.read()
-                with open(host_crt_path, "rb") as f:
-                    host_cert = f.read()
-
-                credentials = grpc.ssl_server_credentials(
-                    [(host_key, host_cert)],
-                    root_certificates=ca_cert,
-                    require_client_auth=True
-                )
-                self._server.add_secure_port(f"{self.host}:{self.port}", credentials)
-                secured = True
-        except Exception:
-            pass
-
-        if not secured:
+            material = _read_tls_material("host", "gRPC server")
+        except InsecureTransportError:
+            self._server = None
+            raise
+        if material is not None:
+            ca_cert, host_cert, host_key = material
+            credentials = grpc.ssl_server_credentials(
+                [(host_key, host_cert)],
+                root_certificates=ca_cert,
+                require_client_auth=True
+            )
+            self._server.add_secure_port(f"{self.host}:{self.port}", credentials)
+        else:
             self._server.add_insecure_port(f"{self.host}:{self.port}")
 
         self._server.start()
@@ -489,43 +550,26 @@ class GRPCTransportClient:
         from orchest.network import tensor_service_pb2_grpc as pb2_grpc
         packet_bytes = TensorPacket.pack(msg_type, meta, tensor, secret_key=secret_key)
         try:
-            channel = None
-            # Configure gRPC mTLS credentials
-            try:
-                ca_path = os.path.join(CERTS_DIR, "ca.crt")
-                worker_crt_path = os.path.join(CERTS_DIR, "worker.crt")
-                worker_key_path = os.path.join(CERTS_DIR, "worker.key")
-                if os.path.exists(ca_path) and os.path.exists(worker_crt_path):
-                    with open(ca_path, "rb") as f:
-                        ca_cert = f.read()
-                    with open(worker_key_path, "rb") as f:
-                        worker_key = f.read()
-                    with open(worker_crt_path, "rb") as f:
-                        worker_cert = f.read()
-
-                    credentials = grpc.ssl_channel_credentials(
-                        root_certificates=ca_cert,
-                        private_key=worker_key,
-                        certificate_chain=worker_cert
-                    )
-                    # Override target name to match host cert SAN to prevent hostname mismatch errors
-                    channel_options = [
-                        ('grpc.ssl_target_name_override', 'host_master'),
-                        ('grpc.max_receive_message_length', 100 * 1024 * 1024),
-                        ('grpc.max_send_message_length', 100 * 1024 * 1024)
-                    ]
-                    channel = grpc.secure_channel(f"{target_ip}:{target_port}", credentials, options=channel_options)
-            except Exception:
-                pass
-
-            if channel is None:
-                channel = grpc.insecure_channel(
-                    f"{target_ip}:{target_port}",
-                    options=[
-                        ('grpc.max_receive_message_length', 100 * 1024 * 1024),
-                        ('grpc.max_send_message_length', 100 * 1024 * 1024)
-                    ]
+            message_options = [
+                ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+                ('grpc.max_send_message_length', 100 * 1024 * 1024)
+            ]
+            # Configure gRPC mTLS credentials (raises InsecureTransportError instead of downgrading)
+            material = _read_tls_material("worker", "gRPC client")
+            if material is not None:
+                ca_cert, worker_cert, worker_key = material
+                credentials = grpc.ssl_channel_credentials(
+                    root_certificates=ca_cert,
+                    private_key=worker_key,
+                    certificate_chain=worker_cert
                 )
+                # Override target name to match host cert SAN to prevent hostname mismatch errors
+                channel = grpc.secure_channel(
+                    f"{target_ip}:{target_port}", credentials,
+                    options=[('grpc.ssl_target_name_override', 'host_master')] + message_options,
+                )
+            else:
+                channel = grpc.insecure_channel(f"{target_ip}:{target_port}", options=message_options)
 
             stub = pb2_grpc.TensorServiceStub(channel)
             req = pb2.PacketRequest(data=packet_bytes)

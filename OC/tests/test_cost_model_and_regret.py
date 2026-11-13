@@ -1009,3 +1009,82 @@ def test_per_model_calibration_held_out():
 
 
 
+
+
+def _qwen7b_layers(n: int = 4):
+    return [
+        LayerProfile(
+            layer_idx=i,
+            name=f"model.layers.{i}",
+            param_count=250_000_000,
+            weight_memory_mb=486.5,
+            flops_per_token=500_000_000,
+            output_shape=[1, 1, 3584],
+            output_tensor_bytes=7168,
+            num_heads=28,
+            num_kv_heads=4,
+            dtype_bytes=2.0,
+            intermediate_size=18944,
+        )
+        for i in range(n)
+    ]
+
+
+def test_comm_payload_scales_with_batch_at_single_token():
+    """Decode-step payload (seq_len=1) must still scale with batch size."""
+    node_a, node_b = create_test_heterogeneous_cluster()
+    kwargs = dict(rtt_ms=1.0, bandwidth_mbps=1000.0, seq_len=1, hidden_size=3584, dtype_bytes=2.0,
+                  include_staging_overhead=False)
+    t_b1 = PartitionCostCalculator.comm_time_ms(7168, node_a, node_b, batch_size=1, **kwargs)
+    t_b8 = PartitionCostCalculator.comm_time_ms(7168, node_a, node_b, batch_size=8, **kwargs)
+    rtt_half = 0.5
+    assert (t_b8 - rtt_half) == pytest.approx(8 * (t_b1 - rtt_half), rel=0.05)
+
+    # Legacy call without hidden_size keeps the per-token payload semantics
+    t_legacy = PartitionCostCalculator.comm_time_ms(
+        7168, node_a, node_b, rtt_ms=1.0, bandwidth_mbps=1000.0, batch_size=8,
+        include_staging_overhead=False,
+    )
+    assert t_legacy == pytest.approx(t_b8, rel=1e-6)
+
+
+def test_decode_phase_ships_one_token_activation():
+    """DP prices the stage-boundary activation as the full prompt in prefill, one token in decode."""
+    assert DynamicPartitioner._activation_seq_len("prefill", 512) == 512
+    assert DynamicPartitioner._activation_seq_len("decode", 512) == 1
+
+    node_a, node_b = create_test_heterogeneous_cluster()
+    layers = _qwen7b_layers(4)
+    dp = DynamicPartitioner()
+    W_prefill = dp._precompute_link_costs(layers, [node_a, node_b], {}, {}, 1, prompt_len=512, phase="prefill")
+    W_decode = dp._precompute_link_costs(layers, [node_a, node_b], {}, {}, 1, prompt_len=512, phase="decode")
+    idx = (0 * 2 + 0) * 2 + 1  # cut after layer 0, node_a -> node_b
+    assert W_prefill[idx] > 10.0 * W_decode[idx]
+
+
+def test_memory_calibration_can_only_tighten_feasibility():
+    """gamma_memory > 1 must reject plans; gamma_memory < 1 must not admit plans the analytic model rejects."""
+    node_a, _ = create_test_heterogeneous_cluster()
+    layers = _qwen7b_layers(4)
+    base = PartitionCostCalculator.calculate_stage_memory_footprint(
+        layers=layers, start_idx=0, end_idx=3, node=node_a, total_layers=4, prompt_len=128,
+    )
+    assert base.is_feasible
+
+    # A factor large enough to push the stage over the ceiling must make it infeasible
+    tight = CalibrationParameters(
+        device_type="cuda",
+        memory_scaling_factor=(base.safety_ceiling_mb / base.total_stage_memory_mb) * 1.5,
+    )
+    assert PartitionCostCalculator.compute_time_ms(
+        layers, 0, 3, node_a, prompt_len=128, calibration_params=tight,
+    ) == float("inf")
+
+    # A factor < 1 behaves exactly like no memory calibration
+    loose = CalibrationParameters(device_type="cuda", memory_scaling_factor=0.151)
+    t_loose = PartitionCostCalculator.compute_time_ms(layers, 0, 3, node_a, prompt_len=128, calibration_params=loose)
+    t_none = PartitionCostCalculator.compute_time_ms(
+        layers, 0, 3, node_a, prompt_len=128,
+        calibration_params=CalibrationParameters(device_type="cuda"),
+    )
+    assert t_loose == t_none != float("inf")

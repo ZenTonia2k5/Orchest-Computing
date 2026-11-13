@@ -14,7 +14,7 @@
     "r2_compute": 1.0,
     "r2_memory": 1.0,
     "num_samples": 4,
-    "timestamp": "2026-11-11 08:36:07",
+    "timestamp": "2026-11-13 14:45:49",
     "model_scaling_factors": {
       "Qwen2.5-0.5B": 0.688,
       "Qwen2.5-1.5B": 0.556
@@ -119,14 +119,9 @@
     "has_negative_discrepancy": false,
     "discrepancy_message": null
   },
-  "physical_regret_concept": {
-    "chosen_partition_measured_ms": 42.5,
-    "empirical_best_measured_ms": 41.8,
-    "raw_regret_ms": 0.7,
-    "relative_regret_pct": 1.67,
-    "has_physical_speedup": false,
-    "has_negative_discrepancy": false,
-    "discrepancy_message": null
+  "physical_regret": {
+    "status": "not_measured",
+    "reason": "No physical cluster measurements supplied (--physical-measurements)."
   },
   "historical_reproduction_notes": {
     "historical_reported_mape": "3.82% (CI: [3.10%, 4.54%])",
