@@ -223,21 +223,50 @@ def run_reproduction(
     # that physical regret was not measured instead of carrying placeholder numbers.
     print("\n6. Evaluating Physical Regret...")
     physical_section: Dict[str, Any]
+    hardware_section: Optional[Dict[str, Any]] = None
     if physical_path:
         with open(physical_path, "r", encoding="utf-8") as f:
             phys_data = json.load(f)
-        phys_result = evaluate_physical_regret(
-            chosen_measured_ms=float(phys_data["chosen_partition_measured_ms"]),
-            empirical_best_measured_ms=float(phys_data["empirical_best_measured_ms"]),
-        )
-        physical_section = {
-            "status": "measured",
-            "source": physical_path,
-            **phys_result.to_dict(),
-        }
-        print(f"   -> Chosen Partition Measured:   {phys_result.chosen_partition_measured_ms} ms")
-        print(f"   -> Empirical Best Measured:     {phys_result.empirical_best_measured_ms} ms")
-        print(f"   -> Raw Physical Regret:         {phys_result.raw_regret_ms} ms ({phys_result.relative_regret_pct}%)")
+        # Accept either the full output of scripts/measure_hardware.py or a bare
+        # {"chosen_partition_measured_ms", "empirical_best_measured_ms"} file.
+        if "physical_regret" in phys_data:
+            hardware_section = {
+                "source": physical_path,
+                "environment": phys_data.get("environment"),
+                "model": phys_data.get("model"),
+                "dtype": phys_data.get("dtype"),
+                "definitions": phys_data.get("definitions"),
+                "fidelity_summary": (phys_data.get("fidelity") or {}).get("summary"),
+                "memory": phys_data.get("memory"),
+                "latency_config": (phys_data.get("latency") or {}).get("config"),
+                "latency_per_plan": {
+                    name: {k: v for k, v in p.items() if k != "example_prefill_trace"}
+                    for name, p in ((phys_data.get("latency") or {}).get("per_plan") or {}).items()
+                },
+            }
+            pr = phys_data["physical_regret"]
+            if pr.get("status") != "measured":
+                physical_section = {"status": pr.get("status", "not_measured"), "source": physical_path, **pr}
+                print(f"   -> Not measured in hardware run: {pr.get('reason')}")
+                pr = None
+        else:
+            pr = phys_data
+        if pr is not None:
+            phys_result = evaluate_physical_regret(
+                chosen_measured_ms=float(pr["chosen_partition_measured_ms"]),
+                empirical_best_measured_ms=float(pr["empirical_best_measured_ms"]),
+            )
+            physical_section = {
+                "status": "measured",
+                "source": physical_path,
+                **phys_result.to_dict(),
+                **{k: pr[k] for k in ("metric", "chosen_plan", "empirical_best_plan", "regret_ci95_ms",
+                                      "candidate_plans_compared", "observations_per_plan_evaluation_half")
+                   if k in pr},
+            }
+            print(f"   -> Chosen Partition Measured:   {phys_result.chosen_partition_measured_ms} ms")
+            print(f"   -> Empirical Best Measured:     {phys_result.empirical_best_measured_ms} ms")
+            print(f"   -> Raw Physical Regret:         {phys_result.raw_regret_ms} ms ({phys_result.relative_regret_pct}%)")
     else:
         physical_section = {
             "status": "not_measured",
@@ -263,6 +292,10 @@ def run_reproduction(
         },
         "algorithmic_optimality": algo_result.to_dict(),
         "physical_regret": physical_section,
+        "hardware_measurements": hardware_section or {
+            "status": "not_measured",
+            "reason": "Run scripts/measure_hardware.py on the cluster and pass its output via --physical-measurements.",
+        },
         "partition_baselines": partition_section["baselines"],
         "ablation": partition_section["ablation"],
         "historical_reproduction_notes": {
@@ -289,7 +322,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--physical-measurements",
         default=None,
-        help="JSON with measured 'chosen_partition_measured_ms' and 'empirical_best_measured_ms' from a real cluster run",
+        help="Output of scripts/measure_hardware.py (or a JSON with 'chosen_partition_measured_ms' and 'empirical_best_measured_ms') from a real cluster run",
     )
     args = parser.parse_args()
 

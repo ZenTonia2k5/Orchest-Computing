@@ -1,0 +1,44 @@
+{
+  "_comment": "Example only. Replace hosts/ports with your workers (started with apps/worker_node.py, auto-accept on). Exactly one plan must set is_orchest_choice=true. predicted_ms / predicted_feasible come from the planner for the same model, prompt length and node set; they are used for prediction error and the false-feasible rate.",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "dtype": "float16",
+  "total_layers": 24,
+  "plans": [
+    {
+      "name": "orchest",
+      "is_orchest_choice": true,
+      "predicted_ms": null,
+      "predicted_feasible": true,
+      "stages": [
+        {"layers": [0, 13], "location": "local", "device": "cuda:0"},
+        {"layers": [14, 23], "location": "remote", "host": "192.168.1.11", "port": 5555, "node_id": "worker_a"}
+      ]
+    },
+    {
+      "name": "equal_layers",
+      "predicted_ms": null,
+      "predicted_feasible": true,
+      "stages": [
+        {"layers": [0, 11], "location": "local", "device": "cuda:0"},
+        {"layers": [12, 23], "location": "remote", "host": "192.168.1.11", "port": 5555, "node_id": "worker_a"}
+      ]
+    },
+    {
+      "name": "worker_first",
+      "predicted_ms": null,
+      "predicted_feasible": true,
+      "stages": [
+        {"layers": [0, 9], "location": "remote", "host": "192.168.1.11", "port": 5555, "node_id": "worker_a"},
+        {"layers": [10, 23], "location": "local", "device": "cuda:0"}
+      ]
+    },
+    {
+      "name": "host_only",
+      "predicted_ms": null,
+      "predicted_feasible": true,
+      "stages": [
+        {"layers": [0, 23], "location": "local", "device": "cuda:0"}
+      ]
+    }
+  ]
+}

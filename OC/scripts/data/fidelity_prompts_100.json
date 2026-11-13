@@ -1,0 +1,507 @@
+{
+ "name": "orchest-fidelity-100",
+ "version": 1,
+ "description": "Fixed 100-prompt set (10 topics x 10 task templates, EN/VI) for end-to-end fidelity runs. Do not edit; add a new version instead.",
+ "prompts": [
+  {
+   "id": "p00_00",
+   "lang": "en",
+   "text": "Explain photosynthesis in simple terms."
+  },
+  {
+   "id": "p00_01",
+   "lang": "en",
+   "text": "Give three key facts about photosynthesis."
+  },
+  {
+   "id": "p00_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about photosynthesis."
+  },
+  {
+   "id": "p00_03",
+   "lang": "en",
+   "text": "What are common misconceptions about photosynthesis?"
+  },
+  {
+   "id": "p00_04",
+   "lang": "en",
+   "text": "Summarize photosynthesis in exactly two sentences."
+  },
+  {
+   "id": "p00_05",
+   "lang": "vi",
+   "text": "Giải thích quang hợp một cách đơn giản."
+  },
+  {
+   "id": "p00_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về quang hợp."
+  },
+  {
+   "id": "p00_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về quang hợp."
+  },
+  {
+   "id": "p00_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes photosynthesis."
+  },
+  {
+   "id": "p00_09",
+   "lang": "en",
+   "text": "Compare photosynthesis with a related concept and list two differences."
+  },
+  {
+   "id": "p01_00",
+   "lang": "en",
+   "text": "Explain TCP congestion control in simple terms."
+  },
+  {
+   "id": "p01_01",
+   "lang": "en",
+   "text": "Give three key facts about TCP congestion control."
+  },
+  {
+   "id": "p01_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about TCP congestion control."
+  },
+  {
+   "id": "p01_03",
+   "lang": "en",
+   "text": "What are common misconceptions about TCP congestion control?"
+  },
+  {
+   "id": "p01_04",
+   "lang": "en",
+   "text": "Summarize TCP congestion control in exactly two sentences."
+  },
+  {
+   "id": "p01_05",
+   "lang": "vi",
+   "text": "Giải thích điều khiển tắc nghẽn TCP một cách đơn giản."
+  },
+  {
+   "id": "p01_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về điều khiển tắc nghẽn TCP."
+  },
+  {
+   "id": "p01_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về điều khiển tắc nghẽn TCP."
+  },
+  {
+   "id": "p01_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes TCP congestion control."
+  },
+  {
+   "id": "p01_09",
+   "lang": "en",
+   "text": "Compare TCP congestion control with a related concept and list two differences."
+  },
+  {
+   "id": "p02_00",
+   "lang": "en",
+   "text": "Explain the French Revolution in simple terms."
+  },
+  {
+   "id": "p02_01",
+   "lang": "en",
+   "text": "Give three key facts about the French Revolution."
+  },
+  {
+   "id": "p02_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about the French Revolution."
+  },
+  {
+   "id": "p02_03",
+   "lang": "en",
+   "text": "What are common misconceptions about the French Revolution?"
+  },
+  {
+   "id": "p02_04",
+   "lang": "en",
+   "text": "Summarize the French Revolution in exactly two sentences."
+  },
+  {
+   "id": "p02_05",
+   "lang": "vi",
+   "text": "Giải thích Cách mạng Pháp một cách đơn giản."
+  },
+  {
+   "id": "p02_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về Cách mạng Pháp."
+  },
+  {
+   "id": "p02_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về Cách mạng Pháp."
+  },
+  {
+   "id": "p02_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes the French Revolution."
+  },
+  {
+   "id": "p02_09",
+   "lang": "en",
+   "text": "Compare the French Revolution with a related concept and list two differences."
+  },
+  {
+   "id": "p03_00",
+   "lang": "en",
+   "text": "Explain binary search in simple terms."
+  },
+  {
+   "id": "p03_01",
+   "lang": "en",
+   "text": "Give three key facts about binary search."
+  },
+  {
+   "id": "p03_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about binary search."
+  },
+  {
+   "id": "p03_03",
+   "lang": "en",
+   "text": "What are common misconceptions about binary search?"
+  },
+  {
+   "id": "p03_04",
+   "lang": "en",
+   "text": "Summarize binary search in exactly two sentences."
+  },
+  {
+   "id": "p03_05",
+   "lang": "vi",
+   "text": "Giải thích tìm kiếm nhị phân một cách đơn giản."
+  },
+  {
+   "id": "p03_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về tìm kiếm nhị phân."
+  },
+  {
+   "id": "p03_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về tìm kiếm nhị phân."
+  },
+  {
+   "id": "p03_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes binary search."
+  },
+  {
+   "id": "p03_09",
+   "lang": "en",
+   "text": "Compare binary search with a related concept and list two differences."
+  },
+  {
+   "id": "p04_00",
+   "lang": "en",
+   "text": "Explain climate change in simple terms."
+  },
+  {
+   "id": "p04_01",
+   "lang": "en",
+   "text": "Give three key facts about climate change."
+  },
+  {
+   "id": "p04_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about climate change."
+  },
+  {
+   "id": "p04_03",
+   "lang": "en",
+   "text": "What are common misconceptions about climate change?"
+  },
+  {
+   "id": "p04_04",
+   "lang": "en",
+   "text": "Summarize climate change in exactly two sentences."
+  },
+  {
+   "id": "p04_05",
+   "lang": "vi",
+   "text": "Giải thích biến đổi khí hậu một cách đơn giản."
+  },
+  {
+   "id": "p04_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về biến đổi khí hậu."
+  },
+  {
+   "id": "p04_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về biến đổi khí hậu."
+  },
+  {
+   "id": "p04_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes climate change."
+  },
+  {
+   "id": "p04_09",
+   "lang": "en",
+   "text": "Compare climate change with a related concept and list two differences."
+  },
+  {
+   "id": "p05_00",
+   "lang": "en",
+   "text": "Explain vaccines in simple terms."
+  },
+  {
+   "id": "p05_01",
+   "lang": "en",
+   "text": "Give three key facts about vaccines."
+  },
+  {
+   "id": "p05_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about vaccines."
+  },
+  {
+   "id": "p05_03",
+   "lang": "en",
+   "text": "What are common misconceptions about vaccines?"
+  },
+  {
+   "id": "p05_04",
+   "lang": "en",
+   "text": "Summarize vaccines in exactly two sentences."
+  },
+  {
+   "id": "p05_05",
+   "lang": "vi",
+   "text": "Giải thích vắc-xin một cách đơn giản."
+  },
+  {
+   "id": "p05_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về vắc-xin."
+  },
+  {
+   "id": "p05_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về vắc-xin."
+  },
+  {
+   "id": "p05_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes vaccines."
+  },
+  {
+   "id": "p05_09",
+   "lang": "en",
+   "text": "Compare vaccines with a related concept and list two differences."
+  },
+  {
+   "id": "p06_00",
+   "lang": "en",
+   "text": "Explain the Pythagorean theorem in simple terms."
+  },
+  {
+   "id": "p06_01",
+   "lang": "en",
+   "text": "Give three key facts about the Pythagorean theorem."
+  },
+  {
+   "id": "p06_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about the Pythagorean theorem."
+  },
+  {
+   "id": "p06_03",
+   "lang": "en",
+   "text": "What are common misconceptions about the Pythagorean theorem?"
+  },
+  {
+   "id": "p06_04",
+   "lang": "en",
+   "text": "Summarize the Pythagorean theorem in exactly two sentences."
+  },
+  {
+   "id": "p06_05",
+   "lang": "vi",
+   "text": "Giải thích định lý Pythagoras một cách đơn giản."
+  },
+  {
+   "id": "p06_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về định lý Pythagoras."
+  },
+  {
+   "id": "p06_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về định lý Pythagoras."
+  },
+  {
+   "id": "p06_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes the Pythagorean theorem."
+  },
+  {
+   "id": "p06_09",
+   "lang": "en",
+   "text": "Compare the Pythagorean theorem with a related concept and list two differences."
+  },
+  {
+   "id": "p07_00",
+   "lang": "en",
+   "text": "Explain public key cryptography in simple terms."
+  },
+  {
+   "id": "p07_01",
+   "lang": "en",
+   "text": "Give three key facts about public key cryptography."
+  },
+  {
+   "id": "p07_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about public key cryptography."
+  },
+  {
+   "id": "p07_03",
+   "lang": "en",
+   "text": "What are common misconceptions about public key cryptography?"
+  },
+  {
+   "id": "p07_04",
+   "lang": "en",
+   "text": "Summarize public key cryptography in exactly two sentences."
+  },
+  {
+   "id": "p07_05",
+   "lang": "vi",
+   "text": "Giải thích mật mã khóa công khai một cách đơn giản."
+  },
+  {
+   "id": "p07_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về mật mã khóa công khai."
+  },
+  {
+   "id": "p07_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về mật mã khóa công khai."
+  },
+  {
+   "id": "p07_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes public key cryptography."
+  },
+  {
+   "id": "p07_09",
+   "lang": "en",
+   "text": "Compare public key cryptography with a related concept and list two differences."
+  },
+  {
+   "id": "p08_00",
+   "lang": "en",
+   "text": "Explain the water cycle in simple terms."
+  },
+  {
+   "id": "p08_01",
+   "lang": "en",
+   "text": "Give three key facts about the water cycle."
+  },
+  {
+   "id": "p08_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about the water cycle."
+  },
+  {
+   "id": "p08_03",
+   "lang": "en",
+   "text": "What are common misconceptions about the water cycle?"
+  },
+  {
+   "id": "p08_04",
+   "lang": "en",
+   "text": "Summarize the water cycle in exactly two sentences."
+  },
+  {
+   "id": "p08_05",
+   "lang": "vi",
+   "text": "Giải thích vòng tuần hoàn của nước một cách đơn giản."
+  },
+  {
+   "id": "p08_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về vòng tuần hoàn của nước."
+  },
+  {
+   "id": "p08_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về vòng tuần hoàn của nước."
+  },
+  {
+   "id": "p08_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes the water cycle."
+  },
+  {
+   "id": "p08_09",
+   "lang": "en",
+   "text": "Compare the water cycle with a related concept and list two differences."
+  },
+  {
+   "id": "p09_00",
+   "lang": "en",
+   "text": "Explain supply and demand in simple terms."
+  },
+  {
+   "id": "p09_01",
+   "lang": "en",
+   "text": "Give three key facts about supply and demand."
+  },
+  {
+   "id": "p09_02",
+   "lang": "en",
+   "text": "Write a short paragraph for a high-school student about supply and demand."
+  },
+  {
+   "id": "p09_03",
+   "lang": "en",
+   "text": "What are common misconceptions about supply and demand?"
+  },
+  {
+   "id": "p09_04",
+   "lang": "en",
+   "text": "Summarize supply and demand in exactly two sentences."
+  },
+  {
+   "id": "p09_05",
+   "lang": "vi",
+   "text": "Giải thích cung và cầu một cách đơn giản."
+  },
+  {
+   "id": "p09_06",
+   "lang": "vi",
+   "text": "Nêu ba ý chính về cung và cầu."
+  },
+  {
+   "id": "p09_07",
+   "lang": "vi",
+   "text": "Viết một đoạn văn ngắn cho học sinh về cung và cầu."
+  },
+  {
+   "id": "p09_08",
+   "lang": "en",
+   "text": "Write a Python comment block that describes supply and demand."
+  },
+  {
+   "id": "p09_09",
+   "lang": "en",
+   "text": "Compare supply and demand with a related concept and list two differences."
+  }
+ ]
+}

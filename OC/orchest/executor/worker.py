@@ -15,6 +15,7 @@ from ..network.transport import TensorTransportServer, TensorTransportClient
 from ..network.protocol import MessageType
 from ..models.auto_slicer import AutoModelSlicer, ModelSliceModule
 from .kv_cache import KVCacheSessionStore, KVCacheMismatchError, run_stage_with_cache
+from . import device_stats
 from ..models.cache_cleaner import cleanup_incomplete_downloads
 
 logger = logging.getLogger("WorkerNode")
@@ -54,6 +55,8 @@ class WorkerNode:
         self.slice_module: Optional[ModelSliceModule] = None
         # Per-generation-session KV caches for this worker's slice
         self.kv_store = KVCacheSessionStore(max_sessions=8)
+        # Last slice-load failure (e.g. OOM while loading weights), reported to the host
+        self.last_load_error: Optional[str] = None
         self.slice_info: Optional[Dict[str, Any]] = None
         self.next_node_ip: Optional[str] = None
         self.next_node_port: Optional[int] = None
@@ -247,6 +250,17 @@ class WorkerNode:
             return None
         elif msg_type == MessageType.FORWARD_TENSOR:
             return self._handle_forward_tensor(meta, tensor)
+        elif msg_type == MessageType.STAGE_STATUS:
+            loaded = (
+                [self.slice_module.start_idx, self.slice_module.end_idx]
+                if self.slice_module is not None else None
+            )
+            return {
+                "worker_status": self.status,
+                "loaded_layers": loaded,
+                "load_error": self.last_load_error,
+                "node_id": self.profiler.node_id,
+            }, None
         elif msg_type == MessageType.RELEASE_SESSION:
             session_id = meta.get("session_id")
             if session_id:
@@ -318,6 +332,10 @@ class WorkerNode:
         )
         self.status = "LOADING"
         self.slice_info = meta
+        # Never keep serving the previous slice while (or after failing at) loading the new one.
+        self.slice_module = None
+        self.last_load_error = None
+        requested_dtype = meta.get("dtype")
 
         def _bg_load():
             device = "cpu"
@@ -335,7 +353,11 @@ class WorkerNode:
                     end_idx=end_idx,
                     total_layers=total_layers,
                     device=device,
-                    dtype=torch.float16 if device != "cpu" else torch.float32,
+                    dtype=(
+                        getattr(torch, requested_dtype)
+                        if isinstance(requested_dtype, str) and hasattr(torch, requested_dtype)
+                        else (torch.float16 if device != "cpu" else torch.float32)
+                    ),
                 )
                 self.status = "READY"
                 logger.info(f"Model Slice [{start_idx}..{end_idx}] loaded successfully on {device} via selective sharding.")
@@ -345,6 +367,7 @@ class WorkerNode:
                     logger.info("Model download/loading interrupted by user (SIGINT/abort).")
                 else:
                     logger.warning(f"Background model slice load notice: {e}")
+                    self.last_load_error = f"{type(e).__name__}: {e}"
                 self.status = "IDLE"
                 try:
                     cleanup_incomplete_downloads(remove_aborted_models=True)
@@ -361,11 +384,25 @@ class WorkerNode:
         if input_tensor is None:
             return {"error": "Missing input tensor"}, None
         if self.slice_module is None:
+            if self.last_load_error:
+                return {"error": f"Worker slice load failed: {self.last_load_error}"}, None
             return {"error": "Worker slice module not initialized or still loading"}, None
+
+        expected = (meta.get("layer_start"), meta.get("layer_end"))
+        loaded = (self.slice_module.start_idx, self.slice_module.end_idx)
+        if expected[0] is not None and expected[1] is not None and tuple(expected) != loaded:
+            return {
+                "error": f"Worker holds layers [{loaded[0]}..{loaded[1]}] but host requested "
+                         f"[{expected[0]}..{expected[1]}]"
+            }, None
 
         self.status = "BUSY"
         device = next(self.slice_module.parameters()).device
         tensor_in = input_tensor.to(device)
+        if meta.get("reset_peak_memory"):
+            device_stats.reset_peak_memory(device)
+        device_stats.synchronize(device)
+        t_start = time.perf_counter()
 
         session_id = meta.get("session_id")
         try:
@@ -388,9 +425,21 @@ class WorkerNode:
         except Exception as e:
             self.status = "READY"
             logger.error(f"Stage forward failed: {e}")
+            if device_stats.is_oom_error(str(e)) and torch.cuda.is_available():
+                torch.cuda.empty_cache()
             return {"error": f"Stage forward failed: {e}"}, None
 
+        device_stats.synchronize(device)
+        stage_compute_ms = (time.perf_counter() - t_start) * 1000.0
         self.status = "READY"
+        trace_meta = {
+            "stage_compute_ms": round(stage_compute_ms, 4),
+            "peak_memory_mb": device_stats.peak_memory_mb(device),
+            "peak_memory_kind": device_stats.peak_memory_kind(device),
+            "device": str(device),
+            "layers": [loaded[0], loaded[1]],
+            "node_id": self.profiler.node_id,
+        }
 
         # Forward output directly to next peer only if requested
         if meta.get("forward_to_next", False) and self.next_node_ip and self.next_node_port:
@@ -409,5 +458,5 @@ class WorkerNode:
         else:
             logger.info("Pipeline stage completed on this node.")
 
-        return out_tensor
+        return trace_meta, out_tensor
 

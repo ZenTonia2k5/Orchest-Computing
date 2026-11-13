@@ -22,6 +22,7 @@ class MessageType(str, Enum):
     DISPATCH_SLICE = "DISPATCH_SLICE"
     INFERENCE_COMPLETE = "INFERENCE_COMPLETE"
     RELEASE_SESSION = "RELEASE_SESSION"
+    STAGE_STATUS = "STAGE_STATUS"
 
 
 def serialize_tensor(tensor: torch.Tensor) -> bytes:
