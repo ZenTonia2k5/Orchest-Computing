@@ -32,6 +32,11 @@ from orchest.partitioner.eval_metrics import (
     evaluate_physical_regret,
 )
 from orchest.partitioner.dynamic_programming import DynamicPartitioner
+from orchest.partitioner.baselines import PartitionBaselines
+from orchest.partitioner.ablation import run_ablation, aggregate_ablation
+from orchest.partitioner.eval_scenarios import (
+    CONTEXTS, EDGE_NODES, GIVEN_ORDER, QWEN25_SPECS, default_scenarios,
+)
 from orchest.profiler.model_profiler import ModelProfiler
 from orchest.profiler.node_profiler import NodeMetrics, GPUMetrics
 
@@ -45,6 +50,92 @@ def test_data_leakage_enforcement(heldout_data: Dict[str, Any]) -> bool:
     except ValueError as e:
         print(f"[+] PASSED: Data leakage prevented as expected -> {e}")
         return True
+
+
+MODEL_BASED_CAVEAT = (
+    "Model-based: every latency here is predicted by the (calibrated) cost model on synthetic node specs "
+    "and analytic Qwen2.5 decoder-layer profiles. These numbers compare decisions under one shared "
+    "evaluator; they are not hardware measurements."
+)
+
+
+def _fmt_ms(x: Optional[float]) -> str:
+    return "infeasible" if x is None else f"{x:.1f}"
+
+
+def run_partition_experiments(calib_params: Any) -> Dict[str, Any]:
+    """Runs every baseline and ablation variant on the default scenario grid."""
+    print("\n7. Partition baselines (shared evaluator, model-based)...")
+    scenarios = default_scenarios()
+    baseline_scenarios = []
+    per_method: Dict[str, Dict[str, Any]] = {}
+    for sc in scenarios:
+        evaluator = PartitionBaselines(
+            partitioner=DynamicPartitioner(calibration_params=calib_params),
+            rtt_matrix=sc.rtt_matrix, bw_matrix=sc.bw_matrix,
+            calibration_params=calib_params, **sc.cost_kwargs(),
+        )
+        rows = PartitionBaselines.summary_rows(evaluator.run_suite(sc.layers, sc.nodes))
+        ref = next(r["latency_ms"] for r in rows if r["method"] == "orchest_subset_dp")
+        for r in rows:
+            r["ratio_vs_orchest"] = (
+                round(r["latency_ms"] / ref, 4) if (r["latency_ms"] is not None and ref) else None
+            )
+            agg = per_method.setdefault(r["method"], {"scenarios": 0, "feasible": 0, "ratios": []})
+            agg["scenarios"] += 1
+            agg["feasible"] += int(r["is_feasible"])
+            if r["ratio_vs_orchest"] is not None:
+                agg["ratios"].append(r["ratio_vs_orchest"])
+        baseline_scenarios.append({"scenario": sc.name, "description": sc.description, "results": rows})
+
+    baseline_summary = {}
+    print(f"   {'Method':<30} | {'Feasible':>9} | {'Mean x Orchest':>14} | {'Max x Orchest':>13}")
+    for method, agg in per_method.items():
+        ratios = agg.pop("ratios")
+        agg["mean_latency_ratio_vs_orchest"] = round(sum(ratios) / len(ratios), 4) if ratios else None
+        agg["max_latency_ratio_vs_orchest"] = round(max(ratios), 4) if ratios else None
+        baseline_summary[method] = agg
+        mean_s = "-" if agg["mean_latency_ratio_vs_orchest"] is None else f"{agg['mean_latency_ratio_vs_orchest']:.3f}"
+        max_s = "-" if agg["max_latency_ratio_vs_orchest"] is None else f"{agg['max_latency_ratio_vs_orchest']:.3f}"
+        print(f"   {method:<30} | {agg['feasible']:>4}/{agg['scenarios']:<4} | {mean_s:>14} | {max_s:>13}")
+
+    print("\n8. Ablation (plan with component removed, score with full model)...")
+    ablation_rows = []
+    for sc in scenarios:
+        ablation_rows.extend(run_ablation(sc, calib_params))
+    ablation_summary = aggregate_ablation(ablation_rows)
+    print(f"   {'Variant':<20} | {'Feasible':>9} | {'False-feasible':>14} | {'Mean regret %':>13} | {'Max regret %':>12}")
+    for name, s in ablation_summary.items():
+        mean_s = "-" if s["mean_relative_regret_pct"] is None else f"{s['mean_relative_regret_pct']:.2f}"
+        max_s = "-" if s["max_relative_regret_pct"] is None else f"{s['max_relative_regret_pct']:.2f}"
+        print(f"   {name:<20} | {s['feasible_under_full_model']:>4}/{s['scenarios']:<4} | "
+              f"{s['false_feasible']:>14} | {mean_s:>13} | {max_s:>12}")
+
+    common = {
+        "caveat": MODEL_BASED_CAVEAT,
+        "scenario_grid": {
+            "models": list(QWEN25_SPECS.keys()),
+            "nodes": {k: {"device_type": v[0], "free_memory_mb": v[1], "est_tflops": v[2]} for k, v in EDGE_NODES.items()},
+            "given_node_order": GIVEN_ORDER,
+            "networks": {"lan": "1 Gbps / 1 ms", "wifi": "100 Mbps / 5 ms", "mixed": "LAN, m2_16g on 50 Mbps / 8 ms"},
+            "contexts": {k: {"prompt_len": v[0], "max_seq_len": v[1], "concurrency": v[2]} for k, v in CONTEXTS.items()},
+            "objective": "single-request prefill latency = sum of stage compute + activation transfers",
+        },
+    }
+    return {
+        "baselines": {
+            **common,
+            "latency_ratio_definition": "method latency / orchest_subset_dp latency in the same scenario (feasible only)",
+            "summary": baseline_summary,
+            "scenarios": baseline_scenarios,
+        },
+        "ablation": {
+            **common,
+            "method": "each variant plans with one component removed; its plan is scored by the full model",
+            "summary": ablation_summary,
+            "rows": ablation_rows,
+        },
+    }
 
 
 def run_reproduction(
@@ -154,7 +245,10 @@ def run_reproduction(
         }
         print("   -> Not measured: pass --physical-measurements <json> with real cluster timings.")
 
-    # 7. Compile and export JSON report
+    # 7-8. Partition baselines and ablation over the synthetic scenario grid
+    partition_section = run_partition_experiments(calib_params)
+
+    # 9. Compile and export JSON report
     report = {
         "title": "Orchest Evaluation and Reproducibility Report",
         "dataset_statistics": {
@@ -169,6 +263,8 @@ def run_reproduction(
         },
         "algorithmic_optimality": algo_result.to_dict(),
         "physical_regret": physical_section,
+        "partition_baselines": partition_section["baselines"],
+        "ablation": partition_section["ablation"],
         "historical_reproduction_notes": {
             "historical_reported_mape": "3.82% (CI: [3.10%, 4.54%])",
             "historical_mechanism": "Synthetic Gaussian noise random.gauss(0, 0.02) over repeated simulated runs",
