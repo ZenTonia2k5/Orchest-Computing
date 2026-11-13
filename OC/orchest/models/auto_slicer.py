@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 from typing import List, Tuple, Optional, Any, Union, Dict, Set
@@ -43,13 +44,54 @@ class ModelSliceModule(nn.Module):
         self.lm_head = lm_head
         self.rotary_emb = rotary_emb
 
+    def _cache_layer_idx(self) -> int:
+        """Global layer index under which the first layer of this slice stores its KV entries."""
+        attn = getattr(self.slice_layers[0], "self_attn", None) if len(self.slice_layers) else None
+        idx = getattr(attn, "layer_idx", None)
+        return self.start_idx if idx is None else int(idx)
+
+    def cached_seq_length(self, past_key_values: Optional[Any]) -> int:
+        """Number of positions already held in this slice's part of the KV cache."""
+        if past_key_values is None or not len(self.slice_layers):
+            return 0
+        return int(past_key_values.get_seq_length(self._cache_layer_idx()))
+
+    @staticmethod
+    def _build_causal_mask(
+        batch_size: int, q_len: int, past_len: int, dtype: torch.dtype, device: torch.device
+    ) -> torch.Tensor:
+        """
+        Additive 4D causal mask [batch, 1, q_len, past_len + q_len]: query at absolute position
+        past_len + i may attend to keys 0..past_len + i. Explicit so that eager and SDPA
+        attention behave identically with and without a KV cache.
+        """
+        q_pos = torch.arange(past_len, past_len + q_len, device=device).unsqueeze(1)
+        k_pos = torch.arange(0, past_len + q_len, device=device).unsqueeze(0)
+        mask = torch.zeros(q_len, past_len + q_len, dtype=dtype, device=device)
+        mask = mask.masked_fill(k_pos > q_pos, torch.finfo(dtype).min)
+        return mask.unsqueeze(0).unsqueeze(0).expand(batch_size, 1, q_len, past_len + q_len)
+
+    @staticmethod
+    def _accepts_hf_kwargs(layer: nn.Module) -> bool:
+        try:
+            params = inspect.signature(layer.forward).parameters
+        except (TypeError, ValueError):
+            return True
+        return "attention_mask" in params or any(p.kind == p.VAR_KEYWORD for p in params.values())
+
     def forward(
         self,
         input_tensor: torch.Tensor,
         position_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Any] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """
+        Runs layers [start_idx..end_idx]. With `past_key_values` (a transformers Cache), the
+        input holds only the new positions; their keys/values are appended to the cache and
+        attention covers all cached positions.
+        """
         x = input_tensor
 
         # Stage 0: Embed token IDs to hidden states if token IDs were passed
@@ -57,9 +99,23 @@ class ModelSliceModule(nn.Module):
             if x.dtype in (torch.long, torch.int32, torch.int64) or (x.dim() == 2 and x.dtype != torch.float32 and x.dtype != torch.float16):
                 x = self.embed_tokens(x)
 
-        if position_ids is None and x.dim() >= 2:
-            seq_len = x.shape[1]
-            position_ids = torch.arange(0, seq_len, dtype=torch.long, device=x.device).unsqueeze(0)
+        past_len = self.cached_seq_length(past_key_values)
+
+        if x.dim() >= 3:
+            batch_size, q_len = x.shape[0], x.shape[1]
+            if position_ids is None:
+                position_ids = torch.arange(
+                    past_len, past_len + q_len, dtype=torch.long, device=x.device
+                ).unsqueeze(0)
+            if attention_mask is None and x.is_floating_point():
+                attention_mask = self._build_causal_mask(batch_size, q_len, past_len, x.dtype, x.device)
+            if past_key_values is not None:
+                kwargs["past_key_values"] = past_key_values
+                kwargs["use_cache"] = True
+                kwargs.setdefault(
+                    "cache_position",
+                    torch.arange(past_len, past_len + q_len, dtype=torch.long, device=x.device),
+                )
 
         if self.rotary_emb is not None and "position_embeddings" not in kwargs:
             try:
@@ -69,19 +125,22 @@ class ModelSliceModule(nn.Module):
 
         # Forward pass through sub-slice of transformer layers
         for layer in self.slice_layers:
-            # Handle standard HF layer signature (hidden_states, attention_mask, position_ids, etc.)
-            try:
+            # Decide the call signature up front: retrying after a TypeError could append
+            # the same positions to the KV cache twice.
+            if self._accepts_hf_kwargs(layer):
                 layer_outputs = layer(
                     x,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
                     **kwargs,
                 )
-            except TypeError:
-                try:
-                    layer_outputs = layer(x, **kwargs)
-                except TypeError:
-                    layer_outputs = layer(x)
+            else:
+                if past_key_values is not None:
+                    raise RuntimeError(
+                        f"Layer {layer.__class__.__name__} does not accept HF cache kwargs; "
+                        "KV-cached execution is not supported for this architecture."
+                    )
+                layer_outputs = layer(x)
 
             if isinstance(layer_outputs, tuple):
                 x = layer_outputs[0]

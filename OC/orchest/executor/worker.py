@@ -14,6 +14,7 @@ from ..network.discovery import UDPDiscoveryService, NodeBeacon
 from ..network.transport import TensorTransportServer, TensorTransportClient
 from ..network.protocol import MessageType
 from ..models.auto_slicer import AutoModelSlicer, ModelSliceModule
+from .kv_cache import KVCacheSessionStore, KVCacheMismatchError, run_stage_with_cache
 from ..models.cache_cleaner import cleanup_incomplete_downloads
 
 logger = logging.getLogger("WorkerNode")
@@ -51,6 +52,8 @@ class WorkerNode:
 
         self.loaded_model: Optional[nn.Module] = None
         self.slice_module: Optional[ModelSliceModule] = None
+        # Per-generation-session KV caches for this worker's slice
+        self.kv_store = KVCacheSessionStore(max_sessions=8)
         self.slice_info: Optional[Dict[str, Any]] = None
         self.next_node_ip: Optional[str] = None
         self.next_node_port: Optional[int] = None
@@ -149,6 +152,7 @@ class WorkerNode:
         self._is_running = False
         self.discovery_service.stop()
         self.transport_server.stop()
+        self.kv_store.clear()
         self.status = "OFFLINE"
         try:
             from orchest.models.cache_cleaner import cleanup_incomplete_downloads
@@ -243,6 +247,11 @@ class WorkerNode:
             return None
         elif msg_type == MessageType.FORWARD_TENSOR:
             return self._handle_forward_tensor(meta, tensor)
+        elif msg_type == MessageType.RELEASE_SESSION:
+            session_id = meta.get("session_id")
+            if session_id:
+                self.kv_store.release(session_id)
+            return None
         return None
 
     def _handle_dispatch_slice(self, meta: Dict[str, Any]):
@@ -318,6 +327,8 @@ class WorkerNode:
                 device = "mps"
 
             try:
+                # Cached keys/values belong to the previous slice; never reuse them.
+                self.kv_store.clear()
                 self.slice_module = AutoModelSlicer.load_selective_slice(
                     model_name=model_name,
                     start_idx=start_idx,
@@ -356,8 +367,28 @@ class WorkerNode:
         device = next(self.slice_module.parameters()).device
         tensor_in = input_tensor.to(device)
 
-        with torch.no_grad():
-            out_tensor = self.slice_module(tensor_in)
+        session_id = meta.get("session_id")
+        try:
+            if session_id:
+                out_tensor = run_stage_with_cache(
+                    self.slice_module,
+                    tensor_in,
+                    self.kv_store,
+                    session_id=session_id,
+                    past_len=int(meta.get("past_len", 0)),
+                    reset_cache=bool(meta.get("reset_cache", False)),
+                )
+            else:
+                with torch.no_grad():
+                    out_tensor = self.slice_module(tensor_in)
+        except KVCacheMismatchError as e:
+            self.status = "READY"
+            logger.error(str(e))
+            return {"error": str(e)}, None
+        except Exception as e:
+            self.status = "READY"
+            logger.error(f"Stage forward failed: {e}")
+            return {"error": f"Stage forward failed: {e}"}, None
 
         self.status = "READY"
 

@@ -1,5 +1,6 @@
 import logging
 import time
+import uuid
 from typing import Generator, Dict, Any, Optional, List
 
 import torch
@@ -93,6 +94,7 @@ class SwarmAutoregressiveGenerator:
         max_new_tokens: int = 1024,
         temperature: float = 0.7,
         demo_mode: bool = False,
+        use_kv_cache: bool = True,
     ) -> Generator[str, None, None]:
         """
         Executes distributed autoregressive token generation across pipeline stages.
@@ -100,6 +102,8 @@ class SwarmAutoregressiveGenerator:
         If demo_mode=True: emits canned simulation output explicitly tagged as demo.
         If demo_mode=False: executes the full distributed execution path. Any failure raises
         an explicit RuntimeError and halts evaluation.
+        use_kv_cache=True keeps a per-session KV cache on every stage (prefill once, then one
+        token per step); use_kv_cache=False recomputes the full sequence each step (reference path).
         """
         self.stop_requested = False
 
@@ -179,31 +183,55 @@ class SwarmAutoregressiveGenerator:
         eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
         prev_decoded_len = len(self.tokenizer.decode(curr_ids[0], skip_special_tokens=True))
 
-        for step in range(max_new_tokens):
-            if self.stop_requested:
-                break
+        # KV-cached decoding: prefill sends the whole prompt once, every later step sends
+        # only the newest token and each stage appends it to its own cache.
+        session_id = uuid.uuid4().hex if use_kv_cache else None
+        past_len = 0
+        next_input = curr_ids
 
-            # Forward pass across all distributed stages
-            logits = self.pipeline_executor.forward_pipeline(curr_ids)
-            next_token_logits = logits[:, -1, :]
+        try:
+            for step in range(max_new_tokens):
+                if self.stop_requested:
+                    break
 
-            # Sampling
-            if temperature <= 0.05:
-                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-            else:
-                scaled_logits = next_token_logits / max(temperature, 1e-4)
-                probs = torch.softmax(scaled_logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
+                # Forward pass across all distributed stages
+                if session_id is not None:
+                    logits = self.pipeline_executor.forward_pipeline(
+                        next_input,
+                        session_id=session_id,
+                        past_len=past_len,
+                        reset_cache=(step == 0),
+                    )
+                    past_len += next_input.shape[1]
+                else:
+                    logits = self.pipeline_executor.forward_pipeline(curr_ids)
+                next_token_logits = logits[:, -1, :]
 
-            token_id = next_token.item()
-            if eos_token_id is not None and token_id == eos_token_id:
-                break
+                # Sampling
+                if temperature <= 0.05:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                else:
+                    scaled_logits = next_token_logits / max(temperature, 1e-4)
+                    probs = torch.softmax(scaled_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
 
-            curr_ids = torch.cat([curr_ids, next_token.to(curr_ids.device)], dim=-1)
+                token_id = next_token.item()
+                if eos_token_id is not None and token_id == eos_token_id:
+                    break
 
-            # Detokenize new token string
-            full_text = self.tokenizer.decode(curr_ids[0], skip_special_tokens=True)
-            new_text = full_text[prev_decoded_len:]
-            if new_text:
-                prev_decoded_len = len(full_text)
-                yield new_text
+                next_token = next_token.to(curr_ids.device)
+                curr_ids = torch.cat([curr_ids, next_token], dim=-1)
+                next_input = next_token
+
+                # Detokenize new token string
+                full_text = self.tokenizer.decode(curr_ids[0], skip_special_tokens=True)
+                new_text = full_text[prev_decoded_len:]
+                if new_text:
+                    prev_decoded_len = len(full_text)
+                    yield new_text
+        finally:
+            if session_id is not None:
+                try:
+                    self.pipeline_executor.release_session(session_id)
+                except Exception as e:
+                    logger.warning(f"Failed to release KV cache session {session_id}: {e}")
