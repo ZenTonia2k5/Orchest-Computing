@@ -59,6 +59,26 @@ MODEL_BASED_CAVEAT = (
 )
 
 
+def calibration_coverage(calib_params: Any) -> Dict[str, Any]:
+    """Which device types / nodes have their own factors, and which scenario devices do not."""
+    scenario_devices = sorted({v[0] for v in EDGE_NODES.values()})
+    covered = set(calib_params.device_scaling_factors)
+    return {
+        "devices_with_compute_factor": sorted(covered),
+        "devices_with_staging_terms": sorted(calib_params.staging_terms),
+        "nodes_with_compute_factor": sorted(calib_params.node_scaling_factors),
+        "samples_per_device": calib_params.metadata.get("samples_per_device"),
+        "samples_per_node": calib_params.metadata.get("samples_per_node"),
+        "reference_semantics": calib_params.metadata.get("reference_semantics"),
+        "scenario_device_types": scenario_devices,
+        "uncalibrated_scenario_devices": [d for d in scenario_devices if d not in covered],
+        "note": (
+            "Factors apply node > device type > global. A device type without samples uses the global "
+            "factor, so calibration cannot change decisions between nodes of uncalibrated types."
+        ),
+    }
+
+
 def _fmt_ms(x: Optional[float]) -> str:
     return "infeasible" if x is None else f"{x:.1f}"
 
@@ -168,6 +188,14 @@ def run_reproduction(
     print(f"   -> Memory Scaling (gamma_memory): {calib_params.memory_scaling_factor}")
     print(f"   -> Comm Staging Slope: {calib_params.comm_staging_slope_ms_per_mb} ms/MB")
     print(f"   -> Model-Specific Compute Scalings: {calib_params.model_scaling_factors}")
+    print(f"   -> Device-Type Compute Scalings: {calib_params.device_scaling_factors}")
+    print(f"   -> Node Compute Scalings (shrunk to device): {calib_params.node_scaling_factors}")
+    print(f"   -> Staging terms fitted per device: { {d: sorted(t) for d, t in calib_params.staging_terms.items()} }")
+    print(f"   -> In-sample R^2 (compute): {calib_params.r2_compute}")
+    coverage = calibration_coverage(calib_params)
+    if coverage["uncalibrated_scenario_devices"]:
+        print(f"   [!] No compute/staging data for device types used in scenarios: "
+              f"{coverage['uncalibrated_scenario_devices']} (they fall back to the global factor)")
 
     # 4. Held-out Evaluation
     print("\n4. Evaluating prediction fidelity on held-out dataset...")
@@ -286,6 +314,7 @@ def run_reproduction(
             "quarantine_leakage_blocked": leakage_blocked,
         },
         "fitted_parameters": calib_params.to_dict(),
+        "calibration_coverage": coverage,
         "held_out_prediction_error": {
             "global_calibration": global_eval,
             "per_model_calibration": model_eval,

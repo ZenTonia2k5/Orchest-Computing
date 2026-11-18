@@ -96,6 +96,11 @@ def test_latency_experiment_splits_and_regret():
         assert lo <= p["ttft_ms"]["mean"] <= hi
         assert p["example_prefill_trace"][0]["location"] == "local"
 
+    obs = lat["stage_observations"]
+    assert len(obs) == 8 * (2 + 3 + 1)  # one entry per stage per recorded request
+    assert {o["plan"] for o in obs} == {"orchest", "three_stage", "single"}
+    assert all(o["prompt_len"] == 12 and o["stage_compute_ms"] >= 0 for o in obs)
+
     pr = hb.physical_regret(lat)
     assert pr["status"] == "measured" and pr["chosen_plan"] == "orchest"
     assert pr["empirical_best_plan"] in lat["per_plan"]

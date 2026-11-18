@@ -787,11 +787,30 @@ class PartitionCostCalculator:
             slope = getattr(calibration_params, "comm_staging_slope_ms_per_mb", 0.5)
             intercept = getattr(calibration_params, "comm_staging_intercept_ms", 0.05)
 
-            t_sync_ms = 0.5 * intercept if has_gpu_src else 0.0
-            t_d2h_ms = 0.40 * slope * payload_mb if has_gpu_src else 0.0
-            t_encode_ms = 0.15 * slope * payload_mb + 0.25 * intercept
-            t_decode_ms = 0.15 * slope * payload_mb + 0.25 * intercept
-            t_h2d_ms = 0.30 * slope * payload_mb if has_gpu_dst else 0.0
+            # Legacy split of one fitted slope/intercept into the five terms; used for any
+            # term whose device type has no separately fitted model.
+            fallback = {
+                "t_sync_ms": 0.5 * intercept,
+                "t_d2h_ms": 0.40 * slope * payload_mb,
+                "t_encode_ms": 0.15 * slope * payload_mb + 0.25 * intercept,
+                "t_decode_ms": 0.15 * slope * payload_mb + 0.25 * intercept,
+                "t_h2d_ms": 0.30 * slope * payload_mb,
+            }
+            src_dev = cls._node_device_type(node_from) if node_from is not None else "cpu"
+            dst_dev = cls._node_device_type(node_to) if node_to is not None else "cpu"
+
+            def term(dev: str, name: str) -> float:
+                fitted = None
+                if hasattr(calibration_params, "staging_term_ms"):
+                    fitted = calibration_params.staging_term_ms(dev, name, payload_mb)
+                return fallback[name] if fitted is None else fitted
+
+            # Sender: sync, D2H, encode. Receiver: decode, H2D.
+            t_sync_ms = term(src_dev, "t_sync_ms") if has_gpu_src else 0.0
+            t_d2h_ms = term(src_dev, "t_d2h_ms") if has_gpu_src else 0.0
+            t_encode_ms = term(src_dev, "t_encode_ms")
+            t_decode_ms = term(dst_dev, "t_decode_ms")
+            t_h2d_ms = term(dst_dev, "t_h2d_ms") if has_gpu_dst else 0.0
             staging_overhead_ms = t_sync_ms + t_d2h_ms + t_encode_ms + t_decode_ms + t_h2d_ms
         else:
             # Baseline theoretical model: staging overhead ~0.5 ms/MB (2000 MB/s effective)
@@ -1127,6 +1146,14 @@ class PartitionCostCalculator:
         return profile.total_transient_mb
 
     @staticmethod
+    def _node_device_type(node: Any) -> str:
+        """Device type a node computes on: its best accelerator, else "cpu"."""
+        gpus = getattr(node, "gpus", None) or []
+        if gpus:
+            return max(gpus, key=lambda g: g.vram_free_mb).device_type
+        return getattr(node, "device_type", None) or "cpu"
+
+    @staticmethod
     def get_node_compute_speed(node: NodeMetrics) -> float:
         """
         Estimates total FLOP/s capacity of a node (sum of GPU/CPU estimated TFLOPs).
@@ -1337,7 +1364,13 @@ class PartitionCostCalculator:
         if eff_mem > footprint.safety_ceiling_mb:
             return float("inf")
 
-        calib_speed = getattr(calibration_params, "compute_scaling_factor", None) if calibration_params else None
+        # Most specific compute factor for this node: node-level, then device type, then global.
+        calib_speed = None
+        if calibration_params is not None:
+            if hasattr(calibration_params, "get_compute_scaling_factor"):
+                calib_speed = calibration_params.get_compute_scaling_factor(node=node)
+            else:
+                calib_speed = getattr(calibration_params, "compute_scaling_factor", None)
 
         if phase == "prefill":
             # Prefill phase: Compute-bound, FLOPs scale with prompt length

@@ -452,6 +452,7 @@ def run_latency_experiment(
     """
     rng = random.Random(seed)
     samples: Dict[str, List[Dict[str, Any]]] = {p.name: [] for p in plans}
+    stage_observations: List[Dict[str, Any]] = []
     load_failures: Dict[str, List[str]] = {p.name: [] for p in plans}
 
     for r in range(rounds):
@@ -475,6 +476,18 @@ def run_latency_experiment(
                     res = measure_request(executor, inputs[idx % len(inputs)], decode_tokens)
                     res.update({"round": r, "index": idx, "split": "selection" if idx % 2 == 0 else "evaluation"})
                     samples[plan.name].append(res)
+                    if res["ok"]:
+                        prompt_len = int(inputs[idx % len(inputs)].shape[1])
+                        for e in res["prefill_trace"]:
+                            if e.get("stage_compute_ms") is None:
+                                continue
+                            stage_observations.append({
+                                "plan": plan.name, "round": r, "split": res["split"],
+                                "node_id": e.get("node_id"), "device": e.get("device"),
+                                "layers": e.get("layers"), "prompt_len": prompt_len,
+                                "stage_compute_ms": e["stage_compute_ms"],
+                                "peak_memory_mb": e.get("peak_memory_mb"),
+                            })
                 ok = [s for s in samples[plan.name] if s["round"] == r and s["ok"]]
                 if ok:
                     log(f"  {plan.name}: ttft mean {statistics.fmean(s['ttft_ms'] for s in ok):.1f} ms "
@@ -506,7 +519,13 @@ def run_latency_experiment(
             "example_prefill_trace": ok[0]["prefill_trace"] if ok else None,
             "errors": sorted({s["error"] for s in ss if not s["ok"]})[:5],
         }
-    return {"per_plan": per_plan, "samples": {k: [_strip_sample(s) for s in v] for k, v in samples.items()}}
+    return {
+        "per_plan": per_plan,
+        "samples": {k: [_strip_sample(s) for s in v] for k, v in samples.items()},
+        # Per-stage prefill compute timings: input for per-node calibration
+        # (CostModelCalibrator.calibration_data_from_measurements).
+        "stage_observations": stage_observations,
+    }
 
 
 def _max_stage_peaks(samples: Sequence[Dict[str, Any]]) -> Dict[str, float]:

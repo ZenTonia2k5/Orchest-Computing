@@ -11,22 +11,84 @@
     "memory_scaling_factor": 0.151,
     "comm_staging_slope_ms_per_mb": 1.211,
     "comm_staging_intercept_ms": 0.05,
-    "r2_compute": 1.0,
-    "r2_memory": 1.0,
+    "r2_compute": 0.793162529916792,
+    "r2_memory": null,
     "num_samples": 4,
-    "timestamp": "2026-11-13 15:25:59",
+    "timestamp": "2026-11-18 15:51:08",
     "model_scaling_factors": {
       "Qwen2.5-0.5B": 0.688,
       "Qwen2.5-1.5B": 0.556
     },
+    "device_scaling_factors": {
+      "cuda": 0.688
+    },
+    "node_scaling_factors": {},
+    "staging_terms": {
+      "cuda": {
+        "t_sync_ms": {
+          "slope_ms_per_mb": 0.0015847222620840025,
+          "intercept_ms": 0.004573819137081253,
+          "n": 4
+        },
+        "t_d2h_ms": {
+          "slope_ms_per_mb": 0.24147757593016142,
+          "intercept_ms": 0.019525343144634222,
+          "n": 4
+        },
+        "t_encode_ms": {
+          "slope_ms_per_mb": 0.484962214814046,
+          "intercept_ms": 0.0,
+          "n": 4
+        },
+        "t_decode_ms": {
+          "slope_ms_per_mb": 0.48066100724259236,
+          "intercept_ms": 0.0,
+          "n": 4
+        },
+        "t_h2d_ms": {
+          "slope_ms_per_mb": 0.14140743163389444,
+          "intercept_ms": 0.03029740424132356,
+          "n": 4
+        }
+      }
+    },
     "metadata": {
       "calibration_samples_count": 4,
-      "base_reference_tflops": 10.0,
       "per_model_ratios": {
         "Qwen2.5-0.5B": 0.688,
         "Qwen2.5-1.5B": 0.556
-      }
+      },
+      "samples_per_device": {
+        "cuda": 4
+      },
+      "samples_per_node": {},
+      "node_shrinkage_prior_samples": 2.0,
+      "samples_with_node_tflops": 0,
+      "reference_semantics": "legacy_reference_tflops",
+      "r2_compute_note": "in-sample, most specific factor; judge accuracy on held-out data"
     }
+  },
+  "calibration_coverage": {
+    "devices_with_compute_factor": [
+      "cuda"
+    ],
+    "devices_with_staging_terms": [
+      "cuda"
+    ],
+    "nodes_with_compute_factor": [],
+    "samples_per_device": {
+      "cuda": 4
+    },
+    "samples_per_node": {},
+    "reference_semantics": "legacy_reference_tflops",
+    "scenario_device_types": [
+      "cuda",
+      "mps"
+    ],
+    "uncalibrated_scenario_devices": [
+      "mps"
+    ],
+    "note": "Factors apply node > device type > global. A device type without samples uses the global factor, so calibration cannot change decisions between nodes of uncalibrated types."
   },
   "held_out_prediction_error": {
     "global_calibration": {
@@ -35,37 +97,53 @@
       "calibrated_mape_pct": 17.52,
       "global_calibrated_mape_pct": 17.52,
       "model_calibrated_mape_pct": 4.65,
+      "device_calibrated_mape_pct": 17.52,
+      "node_calibrated_mape_pct": 17.52,
       "mape_improvement_pct": 75.26,
       "uncalibrated_rmse_ms": 3.774,
       "calibrated_rmse_ms": 1.327,
       "global_calibrated_rmse_ms": 1.327,
       "model_calibrated_rmse_ms": 0.328,
+      "device_calibrated_rmse_ms": 1.327,
+      "node_calibrated_rmse_ms": 1.327,
       "records": [
         {
           "model": "Qwen2.5-0.5B",
           "prompt_len": 1024,
+          "device_type": "cuda",
+          "node_id": null,
           "measured_ms": 2.403,
           "uncalibrated_ms": 3.523,
           "calibrated_ms": 2.424,
           "global_calibrated_ms": 2.424,
           "model_calibrated_ms": 2.424,
+          "device_calibrated_ms": 2.424,
+          "node_calibrated_ms": 2.424,
           "uncalibrated_error_pct": 46.61,
           "calibrated_error_pct": 0.87,
           "global_error_pct": 0.87,
-          "model_error_pct": 0.87
+          "model_error_pct": 0.87,
+          "device_error_pct": 0.87,
+          "node_error_pct": 0.87
         },
         {
           "model": "Qwen2.5-1.5B",
           "prompt_len": 1024,
+          "device_type": "cuda",
+          "node_id": null,
           "measured_ms": 5.492,
           "uncalibrated_ms": 10.711,
           "calibrated_ms": 7.369,
           "global_calibrated_ms": 7.369,
           "model_calibrated_ms": 5.955,
+          "device_calibrated_ms": 7.369,
+          "node_calibrated_ms": 7.369,
           "uncalibrated_error_pct": 95.03,
           "calibrated_error_pct": 34.18,
           "global_error_pct": 34.18,
-          "model_error_pct": 8.44
+          "model_error_pct": 8.44,
+          "device_error_pct": 34.18,
+          "node_error_pct": 34.18
         }
       ]
     },
@@ -75,37 +153,53 @@
       "calibrated_mape_pct": 4.65,
       "global_calibrated_mape_pct": 17.52,
       "model_calibrated_mape_pct": 4.65,
+      "device_calibrated_mape_pct": 17.52,
+      "node_calibrated_mape_pct": 17.52,
       "mape_improvement_pct": 93.43,
       "uncalibrated_rmse_ms": 3.774,
       "calibrated_rmse_ms": 0.328,
       "global_calibrated_rmse_ms": 1.327,
       "model_calibrated_rmse_ms": 0.328,
+      "device_calibrated_rmse_ms": 1.327,
+      "node_calibrated_rmse_ms": 1.327,
       "records": [
         {
           "model": "Qwen2.5-0.5B",
           "prompt_len": 1024,
+          "device_type": "cuda",
+          "node_id": null,
           "measured_ms": 2.403,
           "uncalibrated_ms": 3.523,
           "calibrated_ms": 2.424,
           "global_calibrated_ms": 2.424,
           "model_calibrated_ms": 2.424,
+          "device_calibrated_ms": 2.424,
+          "node_calibrated_ms": 2.424,
           "uncalibrated_error_pct": 46.61,
           "calibrated_error_pct": 0.87,
           "global_error_pct": 0.87,
-          "model_error_pct": 0.87
+          "model_error_pct": 0.87,
+          "device_error_pct": 0.87,
+          "node_error_pct": 0.87
         },
         {
           "model": "Qwen2.5-1.5B",
           "prompt_len": 1024,
+          "device_type": "cuda",
+          "node_id": null,
           "measured_ms": 5.492,
           "uncalibrated_ms": 10.711,
           "calibrated_ms": 5.955,
           "global_calibrated_ms": 7.369,
           "model_calibrated_ms": 5.955,
+          "device_calibrated_ms": 7.369,
+          "node_calibrated_ms": 7.369,
           "uncalibrated_error_pct": 95.03,
           "calibrated_error_pct": 8.44,
           "global_error_pct": 34.18,
-          "model_error_pct": 8.44
+          "model_error_pct": 8.44,
+          "device_error_pct": 34.18,
+          "node_error_pct": 34.18
         }
       ]
     }
@@ -122,6 +216,10 @@
   "physical_regret": {
     "status": "not_measured",
     "reason": "No physical cluster measurements supplied (--physical-measurements)."
+  },
+  "hardware_measurements": {
+    "status": "not_measured",
+    "reason": "Run scripts/measure_hardware.py on the cluster and pass its output via --physical-measurements."
   },
   "partition_baselines": {
     "caveat": "Model-based: every latency here is predicted by the (calibrated) cost model on synthetic node specs and analytic Qwen2.5 decoder-layer profiles. These numbers compare decisions under one shared evaluator; they are not hardware measurements.",
@@ -182,38 +280,38 @@
       "equal_layers": {
         "scenarios": 12,
         "feasible": 6,
-        "mean_latency_ratio_vs_orchest": 6.9299,
-        "max_latency_ratio_vs_orchest": 10.0771
+        "mean_latency_ratio_vs_orchest": 6.9354,
+        "max_latency_ratio_vs_orchest": 10.083
       },
       "equal_layers_feasible": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 4.6966,
-        "max_latency_ratio_vs_orchest": 10.0771
+        "mean_latency_ratio_vs_orchest": 4.699,
+        "max_latency_ratio_vs_orchest": 10.083
       },
       "memory_proportional": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 4.4959,
-        "max_latency_ratio_vs_orchest": 9.716
+        "mean_latency_ratio_vs_orchest": 4.4983,
+        "max_latency_ratio_vs_orchest": 9.7219
       },
       "memory_proportional_feasible": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 4.5686,
-        "max_latency_ratio_vs_orchest": 9.8093
+        "mean_latency_ratio_vs_orchest": 4.571,
+        "max_latency_ratio_vs_orchest": 9.8152
       },
       "compute_aware": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 4.1882,
-        "max_latency_ratio_vs_orchest": 9.3212
+        "mean_latency_ratio_vs_orchest": 4.1907,
+        "max_latency_ratio_vs_orchest": 9.3271
       },
       "compute_aware_feasible": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 4.1882,
-        "max_latency_ratio_vs_orchest": 9.3212
+        "mean_latency_ratio_vs_orchest": 4.1907,
+        "max_latency_ratio_vs_orchest": 9.3271
       },
       "best_single_node": {
         "scenarios": 12,
@@ -224,8 +322,8 @@
       "fixed_order": {
         "scenarios": 12,
         "feasible": 12,
-        "mean_latency_ratio_vs_orchest": 3.0013,
-        "max_latency_ratio_vs_orchest": 6.79
+        "mean_latency_ratio_vs_orchest": 3.0023,
+        "max_latency_ratio_vs_orchest": 6.7911
       },
       "best_fixed_order": {
         "scenarios": 12,
@@ -248,7 +346,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 242.387,
+            "latency_ms": 242.814,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -256,12 +354,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 3.3573
+            "ratio_vs_orchest": 3.3632
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 242.387,
+            "latency_ms": 242.814,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -269,12 +367,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 3.3573
+            "ratio_vs_orchest": 3.3632
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 216.315,
+            "latency_ms": 216.742,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -282,12 +380,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.9962
+            "ratio_vs_orchest": 3.0021
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 223.048,
+            "latency_ms": 223.475,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -295,12 +393,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 3.0894
+            "ratio_vs_orchest": 3.0954
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 187.81,
+            "latency_ms": 188.237,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -308,12 +406,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.6014
+            "ratio_vs_orchest": 2.6073
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 187.81,
+            "latency_ms": 188.237,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -321,7 +419,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 2.6014
+            "ratio_vs_orchest": 2.6073
           },
           {
             "method": "best_single_node",
@@ -336,7 +434,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 134.95,
+            "latency_ms": 135.377,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..1]",
@@ -344,7 +442,7 @@
               "rtx3060_12g[3..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.8692
+            "ratio_vs_orchest": 1.8751
           },
           {
             "method": "best_fixed_order",
@@ -363,7 +461,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -375,7 +473,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 2110.395,
+            "latency_ms": 2113.744,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -383,12 +481,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 3.275
+            "ratio_vs_orchest": 3.2802
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 2110.395,
+            "latency_ms": 2113.744,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -396,12 +494,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 3.275
+            "ratio_vs_orchest": 3.2802
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 1877.694,
+            "latency_ms": 1881.043,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -409,12 +507,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.9138
+            "ratio_vs_orchest": 2.919
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 1937.786,
+            "latency_ms": 1941.135,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -422,12 +520,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 3.0071
+            "ratio_vs_orchest": 3.0123
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 1623.256,
+            "latency_ms": 1626.605,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -435,12 +533,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.519
+            "ratio_vs_orchest": 2.5242
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 1623.256,
+            "latency_ms": 1626.605,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -448,7 +546,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 2.519
+            "ratio_vs_orchest": 2.5242
           },
           {
             "method": "best_single_node",
@@ -463,7 +561,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 1151.461,
+            "latency_ms": 1154.81,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..1]",
@@ -471,7 +569,7 @@
               "rtx3060_12g[3..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.7869
+            "ratio_vs_orchest": 1.7921
           },
           {
             "method": "best_fixed_order",
@@ -490,7 +588,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -502,7 +600,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 588.128,
+            "latency_ms": 588.553,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -510,12 +608,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 8.1462
+            "ratio_vs_orchest": 8.152
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 588.128,
+            "latency_ms": 588.553,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -523,12 +621,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 8.1462
+            "ratio_vs_orchest": 8.152
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 562.056,
+            "latency_ms": 562.481,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -536,12 +634,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 7.785
+            "ratio_vs_orchest": 7.7909
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 568.789,
+            "latency_ms": 569.214,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -549,12 +647,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 7.8783
+            "ratio_vs_orchest": 7.8842
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 533.551,
+            "latency_ms": 533.976,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -562,12 +660,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 7.3902
+            "ratio_vs_orchest": 7.3961
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 533.551,
+            "latency_ms": 533.976,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -575,7 +673,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 7.3902
+            "ratio_vs_orchest": 7.3961
           },
           {
             "method": "best_single_node",
@@ -614,7 +712,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -626,7 +724,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 4834.305,
+            "latency_ms": 4837.651,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -634,12 +732,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 7.502
+            "ratio_vs_orchest": 7.5072
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 4834.305,
+            "latency_ms": 4837.651,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -647,12 +745,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 7.502
+            "ratio_vs_orchest": 7.5072
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 4601.604,
+            "latency_ms": 4604.95,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -660,12 +758,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 7.1409
+            "ratio_vs_orchest": 7.1461
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 4661.696,
+            "latency_ms": 4665.042,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -673,12 +771,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 7.2341
+            "ratio_vs_orchest": 7.2393
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 4347.166,
+            "latency_ms": 4350.512,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -686,12 +784,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 6.746
+            "ratio_vs_orchest": 6.7512
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 4347.166,
+            "latency_ms": 4350.512,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -699,7 +797,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 6.746
+            "ratio_vs_orchest": 6.7512
           },
           {
             "method": "best_single_node",
@@ -714,13 +812,13 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 3367.35,
+            "latency_ms": 3368.08,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 5.2255
+            "ratio_vs_orchest": 5.2267
           },
           {
             "method": "best_fixed_order",
@@ -739,7 +837,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -751,7 +849,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 727.539,
+            "latency_ms": 727.964,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -759,12 +857,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 10.0771
+            "ratio_vs_orchest": 10.083
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 727.539,
+            "latency_ms": 727.964,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -772,12 +870,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 10.0771
+            "ratio_vs_orchest": 10.083
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 701.467,
+            "latency_ms": 701.892,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -785,12 +883,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 9.716
+            "ratio_vs_orchest": 9.7219
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 708.2,
+            "latency_ms": 708.625,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -798,12 +896,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 9.8093
+            "ratio_vs_orchest": 9.8152
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 672.962,
+            "latency_ms": 673.387,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -811,12 +909,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 9.3212
+            "ratio_vs_orchest": 9.3271
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 672.962,
+            "latency_ms": 673.387,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -824,7 +922,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 9.3212
+            "ratio_vs_orchest": 9.3271
           },
           {
             "method": "best_single_node",
@@ -863,7 +961,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -875,7 +973,7 @@
           {
             "method": "equal_layers",
             "is_feasible": true,
-            "latency_ms": 5942.601,
+            "latency_ms": 5945.948,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -883,12 +981,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 9.2219
+            "ratio_vs_orchest": 9.2271
           },
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 5942.601,
+            "latency_ms": 5945.948,
             "stages": [
               "gtx1650_4g[0..6]",
               "m2_16g[7..13]",
@@ -896,12 +994,12 @@
               "rtx3060_12g[21..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.00",
-            "ratio_vs_orchest": 9.2219
+            "ratio_vs_orchest": 9.2271
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 5709.9,
+            "latency_ms": 5713.247,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -909,12 +1007,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 8.8607
+            "ratio_vs_orchest": 8.8659
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 5769.992,
+            "latency_ms": 5773.339,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -922,12 +1020,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 8.954
+            "ratio_vs_orchest": 8.9592
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 5455.462,
+            "latency_ms": 5458.809,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -935,12 +1033,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 8.4659
+            "ratio_vs_orchest": 8.4711
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 5455.462,
+            "latency_ms": 5458.809,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -948,7 +1046,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 8.4659
+            "ratio_vs_orchest": 8.4711
           },
           {
             "method": "best_single_node",
@@ -963,13 +1061,13 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 4375.483,
+            "latency_ms": 4376.213,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 6.79
+            "ratio_vs_orchest": 6.7911
           },
           {
             "method": "best_fixed_order",
@@ -988,7 +1086,7 @@
             "stages": [
               "rtx3060_12g[0..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1013,7 +1111,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 992.767,
+            "latency_ms": 993.748,
             "stages": [
               "gtx1650_4g[0..4]",
               "m2_16g[5..11]",
@@ -1026,7 +1124,7 @@
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 948.923,
+            "latency_ms": 949.904,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1039,7 +1137,7 @@
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 982.16,
+            "latency_ms": 983.141,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1052,7 +1150,7 @@
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 808.196,
+            "latency_ms": 809.177,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1060,12 +1158,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 1.6414
+            "ratio_vs_orchest": 1.6417
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 808.196,
+            "latency_ms": 809.177,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1073,7 +1171,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 1.6414
+            "ratio_vs_orchest": 1.6417
           },
           {
             "method": "best_single_node",
@@ -1086,7 +1184,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 610.899,
+            "latency_ms": 611.88,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..1]",
@@ -1094,12 +1192,12 @@
               "rtx3060_12g[8..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.2407
+            "ratio_vs_orchest": 1.2414
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 492.391,
+            "latency_ms": 492.882,
             "stages": [
               "rtx2060_6g[0..7]",
               "rtx3060_12g[8..27]"
@@ -1110,12 +1208,12 @@
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 492.391,
+            "latency_ms": 492.882,
             "stages": [
               "rtx3060_12g[0..19]",
               "rtx2060_6g[20..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1140,7 +1238,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 7962.092,
+            "latency_ms": 7969.89,
             "stages": [
               "gtx1650_4g[0..3]",
               "m2_16g[4..10]",
@@ -1148,12 +1246,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 6.00",
-            "ratio_vs_orchest": 1.4692
+            "ratio_vs_orchest": 1.4696
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 7950.158,
+            "latency_ms": 7957.956,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1161,12 +1259,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 1.467
+            "ratio_vs_orchest": 1.4674
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 8230.592,
+            "latency_ms": 8238.39,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1174,12 +1272,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 1.5187
+            "ratio_vs_orchest": 1.5191
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 6762.785,
+            "latency_ms": 6770.583,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1187,12 +1285,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 1.2479
+            "ratio_vs_orchest": 1.2484
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 6762.785,
+            "latency_ms": 6770.583,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1200,7 +1298,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 1.2479
+            "ratio_vs_orchest": 1.2484
           },
           {
             "method": "best_single_node",
@@ -1213,7 +1311,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 5766.346,
+            "latency_ms": 5774.144,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..3]",
@@ -1221,30 +1319,30 @@
               "rtx3060_12g[11..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.064
+            "ratio_vs_orchest": 1.0647
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 5419.439,
+            "latency_ms": 5423.338,
             "stages": [
-              "m2_16g[0..3]",
-              "rtx2060_6g[4..10]",
+              "rtx2060_6g[0..6]",
+              "m2_16g[7..10]",
               "rtx3060_12g[11..27]"
             ],
-            "notes": "best order=m2_16g,rtx2060_6g,rtx3060_12g,gtx1650_4g; feasible orderings 24/24",
+            "notes": "best order=rtx2060_6g,m2_16g,rtx3060_12g,gtx1650_4g; feasible orderings 24/24",
             "ratio_vs_orchest": 1.0
           },
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 5419.439,
+            "latency_ms": 5423.338,
             "stages": [
               "rtx3060_12g[0..16]",
-              "rtx2060_6g[17..23]",
-              "m2_16g[24..27]"
+              "m2_16g[17..20]",
+              "rtx2060_6g[21..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1269,7 +1367,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 1791.49,
+            "latency_ms": 1792.471,
             "stages": [
               "gtx1650_4g[0..4]",
               "m2_16g[5..11]",
@@ -1277,12 +1375,12 @@
               "rtx3060_12g[19..27]"
             ],
             "notes": "L1 deviation from target layer counts: 4.00",
-            "ratio_vs_orchest": 2.3615
+            "ratio_vs_orchest": 2.3612
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 1747.646,
+            "latency_ms": 1748.627,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1290,12 +1388,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.3037
+            "ratio_vs_orchest": 2.3035
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 1780.883,
+            "latency_ms": 1781.864,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1303,12 +1401,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 2.3475
+            "ratio_vs_orchest": 2.3473
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 1606.919,
+            "latency_ms": 1607.9,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1316,12 +1414,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.1182
+            "ratio_vs_orchest": 2.1181
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 1606.919,
+            "latency_ms": 1607.9,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1329,7 +1427,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 2.1182
+            "ratio_vs_orchest": 2.1181
           },
           {
             "method": "best_single_node",
@@ -1342,7 +1440,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 1409.622,
+            "latency_ms": 1410.603,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..1]",
@@ -1350,12 +1448,12 @@
               "rtx3060_12g[8..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.8581
+            "ratio_vs_orchest": 1.8582
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 758.632,
+            "latency_ms": 759.123,
             "stages": [
               "rtx2060_6g[0..7]",
               "rtx3060_12g[8..27]"
@@ -1366,12 +1464,12 @@
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 758.632,
+            "latency_ms": 759.123,
             "stages": [
               "rtx3060_12g[0..19]",
               "rtx2060_6g[20..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1396,7 +1494,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 14309.879,
+            "latency_ms": 14317.677,
             "stages": [
               "gtx1650_4g[0..3]",
               "m2_16g[4..10]",
@@ -1404,12 +1502,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 6.00",
-            "ratio_vs_orchest": 1.688
+            "ratio_vs_orchest": 1.6886
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 14297.945,
+            "latency_ms": 14305.743,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1417,12 +1515,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 1.6866
+            "ratio_vs_orchest": 1.6872
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 14578.379,
+            "latency_ms": 14586.177,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1430,12 +1528,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 1.7197
+            "ratio_vs_orchest": 1.7203
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 13110.572,
+            "latency_ms": 13118.37,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1443,12 +1541,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 1.5466
+            "ratio_vs_orchest": 1.5472
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 13110.572,
+            "latency_ms": 13118.37,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1456,7 +1554,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 1.5466
+            "ratio_vs_orchest": 1.5472
           },
           {
             "method": "best_single_node",
@@ -1469,7 +1567,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 12114.133,
+            "latency_ms": 12121.931,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..3]",
@@ -1477,28 +1575,28 @@
               "rtx3060_12g[11..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 1.429
+            "ratio_vs_orchest": 1.4296
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 8477.269,
+            "latency_ms": 8478.991,
             "stages": [
-              "m2_16g[0..10]",
-              "rtx3060_12g[11..27]"
+              "rtx3060_12g[0..16]",
+              "m2_16g[17..27]"
             ],
-            "notes": "best order=m2_16g,rtx3060_12g,gtx1650_4g,rtx2060_6g; feasible orderings 24/24",
+            "notes": "best order=rtx3060_12g,m2_16g,gtx1650_4g,rtx2060_6g; feasible orderings 24/24",
             "ratio_vs_orchest": 1.0
           },
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 8477.269,
+            "latency_ms": 8478.991,
             "stages": [
               "rtx3060_12g[0..16]",
               "m2_16g[17..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1523,7 +1621,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 2115.451,
+            "latency_ms": 2116.434,
             "stages": [
               "gtx1650_4g[0..4]",
               "m2_16g[5..11]",
@@ -1531,12 +1629,12 @@
               "rtx3060_12g[19..27]"
             ],
             "notes": "L1 deviation from target layer counts: 4.00",
-            "ratio_vs_orchest": 4.2963
+            "ratio_vs_orchest": 4.294
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 2071.607,
+            "latency_ms": 2072.59,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1544,12 +1642,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 4.2072
+            "ratio_vs_orchest": 4.205
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 2104.844,
+            "latency_ms": 2105.827,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1557,12 +1655,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 4.2747
+            "ratio_vs_orchest": 4.2725
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 1930.88,
+            "latency_ms": 1931.863,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1570,12 +1668,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 3.9214
+            "ratio_vs_orchest": 3.9195
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 1930.88,
+            "latency_ms": 1931.863,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1583,7 +1681,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 3.9214
+            "ratio_vs_orchest": 3.9195
           },
           {
             "method": "best_single_node",
@@ -1596,7 +1694,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 1733.583,
+            "latency_ms": 1734.566,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..1]",
@@ -1604,12 +1702,12 @@
               "rtx3060_12g[8..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 3.5207
+            "ratio_vs_orchest": 3.5192
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 492.391,
+            "latency_ms": 492.882,
             "stages": [
               "rtx2060_6g[0..7]",
               "rtx3060_12g[8..27]"
@@ -1620,12 +1718,12 @@
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 492.391,
+            "latency_ms": 492.882,
             "stages": [
               "rtx3060_12g[0..19]",
               "rtx2060_6g[20..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1650,7 +1748,7 @@
           {
             "method": "equal_layers_feasible",
             "is_feasible": true,
-            "latency_ms": 16894.57,
+            "latency_ms": 16902.369,
             "stages": [
               "gtx1650_4g[0..3]",
               "m2_16g[4..10]",
@@ -1658,12 +1756,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 6.00",
-            "ratio_vs_orchest": 2.9486
+            "ratio_vs_orchest": 2.9459
           },
           {
             "method": "memory_proportional",
             "is_feasible": true,
-            "latency_ms": 16882.636,
+            "latency_ms": 16890.435,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..11]",
@@ -1671,12 +1769,12 @@
               "rtx3060_12g[17..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.9465
+            "ratio_vs_orchest": 2.9439
           },
           {
             "method": "memory_proportional_feasible",
             "is_feasible": true,
-            "latency_ms": 17163.07,
+            "latency_ms": 17170.869,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..12]",
@@ -1684,12 +1782,12 @@
               "rtx3060_12g[18..27]"
             ],
             "notes": "L1 deviation from target layer counts: 1.33",
-            "ratio_vs_orchest": 2.9955
+            "ratio_vs_orchest": 2.9927
           },
           {
             "method": "compute_aware",
             "is_feasible": true,
-            "latency_ms": 15695.263,
+            "latency_ms": 15703.062,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1697,12 +1795,12 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": null,
-            "ratio_vs_orchest": 2.7393
+            "ratio_vs_orchest": 2.7369
           },
           {
             "method": "compute_aware_feasible",
             "is_feasible": true,
-            "latency_ms": 15695.263,
+            "latency_ms": 15703.062,
             "stages": [
               "gtx1650_4g[0..2]",
               "m2_16g[3..6]",
@@ -1710,7 +1808,7 @@
               "rtx3060_12g[14..27]"
             ],
             "notes": "L1 deviation from target layer counts: 0.44",
-            "ratio_vs_orchest": 2.7393
+            "ratio_vs_orchest": 2.7369
           },
           {
             "method": "best_single_node",
@@ -1723,7 +1821,7 @@
           {
             "method": "fixed_order",
             "is_feasible": true,
-            "latency_ms": 14698.824,
+            "latency_ms": 14706.623,
             "stages": [
               "gtx1650_4g[0..0]",
               "m2_16g[1..3]",
@@ -1731,12 +1829,12 @@
               "rtx3060_12g[11..27]"
             ],
             "notes": "order=gtx1650_4g,m2_16g,rtx2060_6g,rtx3060_12g",
-            "ratio_vs_orchest": 2.5654
+            "ratio_vs_orchest": 2.5632
           },
           {
             "method": "best_fixed_order",
             "is_feasible": true,
-            "latency_ms": 5729.708,
+            "latency_ms": 5737.506,
             "stages": [
               "gtx1650_4g[0..3]",
               "rtx2060_6g[4..10]",
@@ -1748,13 +1846,13 @@
           {
             "method": "orchest_subset_dp",
             "is_feasible": true,
-            "latency_ms": 5729.708,
+            "latency_ms": 5737.506,
             "stages": [
-              "rtx3060_12g[0..16]",
-              "rtx2060_6g[17..23]",
+              "rtx2060_6g[0..6]",
+              "rtx3060_12g[7..23]",
               "gtx1650_4g[24..27]"
             ],
-            "notes": null,
+            "notes": "solver objective=sum",
             "ratio_vs_orchest": 1.0
           }
         ]
@@ -1834,9 +1932,9 @@
         "planner_found_plan": 12,
         "feasible_under_full_model": 12,
         "false_feasible": 0,
-        "scenarios_with_regret": 0,
-        "mean_relative_regret_pct": 0.0,
-        "max_relative_regret_pct": 0.0,
+        "scenarios_with_regret": 1,
+        "mean_relative_regret_pct": 0.003,
+        "max_relative_regret_pct": 0.032,
         "negative_regret_count": 0
       },
       "no_calibration": {
@@ -1845,9 +1943,9 @@
         "planner_found_plan": 12,
         "feasible_under_full_model": 12,
         "false_feasible": 0,
-        "scenarios_with_regret": 0,
-        "mean_relative_regret_pct": 0.0,
-        "max_relative_regret_pct": 0.0,
+        "scenarios_with_regret": 1,
+        "mean_relative_regret_pct": 0.003,
+        "max_relative_regret_pct": 0.032,
         "negative_regret_count": 0
       },
       "no_kv_cache_memory": {
@@ -1868,8 +1966,8 @@
         "feasible_under_full_model": 12,
         "false_feasible": 0,
         "scenarios_with_regret": 12,
-        "mean_relative_regret_pct": 200.135,
-        "max_relative_regret_pct": 578.997,
+        "mean_relative_regret_pct": 200.234,
+        "max_relative_regret_pct": 579.11,
         "negative_regret_count": 0
       }
     },
@@ -1945,9 +2043,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 134.95,
-        "regret_vs_full_ms": 62.753,
-        "relative_regret_pct": 86.919,
+        "latency_ms": 135.377,
+        "regret_vs_full_ms": 63.18,
+        "relative_regret_pct": 87.511,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2028,9 +2126,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 1151.461,
-        "regret_vs_full_ms": 507.057,
-        "relative_regret_pct": 78.686,
+        "latency_ms": 1154.81,
+        "regret_vs_full_ms": 510.406,
+        "relative_regret_pct": 79.206,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2191,9 +2289,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 3367.35,
-        "regret_vs_full_ms": 2722.946,
-        "relative_regret_pct": 422.553,
+        "latency_ms": 3368.08,
+        "regret_vs_full_ms": 2723.676,
+        "relative_regret_pct": 422.666,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2352,9 +2450,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 4375.483,
-        "regret_vs_full_ms": 3731.079,
-        "relative_regret_pct": 578.997,
+        "latency_ms": 4376.213,
+        "regret_vs_full_ms": 3731.809,
+        "relative_regret_pct": 579.11,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2369,7 +2467,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2386,7 +2484,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2403,7 +2501,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2420,7 +2518,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2437,9 +2535,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 610.899,
-        "regret_vs_full_ms": 118.508,
-        "relative_regret_pct": 24.068,
+        "latency_ms": 611.88,
+        "regret_vs_full_ms": 118.998,
+        "relative_regret_pct": 24.143,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2456,14 +2554,14 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5419.439,
+        "latency_ms": 5423.338,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
         "stages": [
           "rtx3060_12g[0..16]",
-          "rtx2060_6g[17..23]",
-          "m2_16g[24..27]"
+          "m2_16g[17..20]",
+          "rtx2060_6g[21..27]"
         ],
         "notes": null
       },
@@ -2474,9 +2572,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5419.439,
-        "regret_vs_full_ms": 0.0,
-        "relative_regret_pct": 0.0,
+        "latency_ms": 5425.06,
+        "regret_vs_full_ms": 1.722,
+        "relative_regret_pct": 0.032,
         "negative_regret": false,
         "stages": [
           "rtx3060_12g[0..16]",
@@ -2492,9 +2590,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5419.439,
-        "regret_vs_full_ms": 0.0,
-        "relative_regret_pct": 0.0,
+        "latency_ms": 5425.06,
+        "regret_vs_full_ms": 1.722,
+        "relative_regret_pct": 0.032,
         "negative_regret": false,
         "stages": [
           "rtx3060_12g[0..16]",
@@ -2527,9 +2625,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5766.346,
-        "regret_vs_full_ms": 346.907,
-        "relative_regret_pct": 6.401,
+        "latency_ms": 5774.144,
+        "regret_vs_full_ms": 350.806,
+        "relative_regret_pct": 6.468,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2546,7 +2644,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 758.632,
+        "latency_ms": 759.123,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2563,7 +2661,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 758.632,
+        "latency_ms": 759.123,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2580,7 +2678,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 758.632,
+        "latency_ms": 759.123,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2597,7 +2695,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 758.632,
+        "latency_ms": 759.123,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2614,9 +2712,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 1409.622,
-        "regret_vs_full_ms": 650.99,
-        "relative_regret_pct": 85.811,
+        "latency_ms": 1410.603,
+        "regret_vs_full_ms": 651.48,
+        "relative_regret_pct": 85.82,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2633,7 +2731,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 8477.269,
+        "latency_ms": 8478.991,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2650,7 +2748,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 8477.269,
+        "latency_ms": 8478.991,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2667,7 +2765,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 8477.269,
+        "latency_ms": 8478.991,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2701,9 +2799,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 12114.133,
-        "regret_vs_full_ms": 3636.864,
-        "relative_regret_pct": 42.901,
+        "latency_ms": 12121.931,
+        "regret_vs_full_ms": 3642.94,
+        "relative_regret_pct": 42.964,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2720,7 +2818,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2737,7 +2835,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2754,7 +2852,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2771,7 +2869,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 492.391,
+        "latency_ms": 492.882,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2788,9 +2886,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 1733.583,
-        "regret_vs_full_ms": 1241.192,
-        "relative_regret_pct": 252.074,
+        "latency_ms": 1734.566,
+        "regret_vs_full_ms": 1241.684,
+        "relative_regret_pct": 251.923,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
@@ -2807,13 +2905,13 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5729.708,
+        "latency_ms": 5737.506,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
         "stages": [
-          "rtx3060_12g[0..16]",
-          "rtx2060_6g[17..23]",
+          "rtx2060_6g[0..6]",
+          "rtx3060_12g[7..23]",
           "gtx1650_4g[24..27]"
         ],
         "notes": null
@@ -2825,7 +2923,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5729.708,
+        "latency_ms": 5737.506,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2843,7 +2941,7 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 5729.708,
+        "latency_ms": 5737.506,
         "regret_vs_full_ms": 0.0,
         "relative_regret_pct": 0.0,
         "negative_regret": false,
@@ -2878,9 +2976,9 @@
         "planner_found_plan": true,
         "feasible_under_full_model": true,
         "false_feasible": false,
-        "latency_ms": 14698.824,
-        "regret_vs_full_ms": 8969.116,
-        "relative_regret_pct": 156.537,
+        "latency_ms": 14706.623,
+        "regret_vs_full_ms": 8969.117,
+        "relative_regret_pct": 156.324,
         "negative_regret": false,
         "stages": [
           "gtx1650_4g[0..0]",
