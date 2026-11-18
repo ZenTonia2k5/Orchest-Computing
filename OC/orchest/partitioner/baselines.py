@@ -16,6 +16,14 @@ Baselines:
     when no single node can hold it.
   - fixed order: contiguous DP over the given node order (PipeEdge-style).
   - best fixed order: the fixed-order DP repeated over every node ordering, best kept.
+
+Objective (`objective`):
+  "sum"         single-request latency, sum of stage times t_s (t_s = incoming transfer + compute)
+  "microbatch"  makespan of G = num_microbatches independent micro-batches,
+                T_G = sum_s t_s + (G - 1) * max_s t_s. Stage costs are those of one micro-batch
+                (batch_size is the micro-batch size). Fixed-order DP and the ratio heuristics do
+                not optimise T_G; they are only scored by it. The suite then also reports the
+                sum-optimal and bottleneck-optimal subset-DP plans.
 """
 
 import itertools
@@ -50,7 +58,13 @@ class PartitionBaselines:
         phase: str = "prefill",
         alpha: float = 0.90,
         calibration_params: Optional[Any] = None,
+        objective: str = "sum",
+        num_microbatches: int = 1,
     ):
+        if objective not in ("sum", "microbatch"):
+            raise ValueError(f"objective must be 'sum' or 'microbatch', got {objective!r}")
+        self.objective = objective
+        self.num_microbatches = max(int(num_microbatches), 1) if objective == "microbatch" else 1
         self.partitioner = partitioner or DynamicPartitioner()
         self.cost_calc = self.partitioner.cost_calc
         self.rtt_matrix = rtt_matrix or {}
@@ -107,7 +121,8 @@ class PartitionBaselines:
     ) -> PartitionEvaluationResult:
         """
         Scores a plan (contiguous stages covering every layer once) with the shared cost model.
-        Total = sum of stage compute + incoming activation transfer (single-request latency).
+        Stage time t_s = compute + incoming activation transfer. Total = sum_s t_s for the
+        "sum" objective, T_G = sum_s t_s + (G - 1) * max_s t_s for "microbatch".
         A stage that violates the memory constraint makes the whole plan infeasible (total = inf).
         """
         N = len(layers)
@@ -120,7 +135,7 @@ class PartitionBaselines:
             raise ValueError(f"{method_name}: stages cover {expected} of {N} layers")
 
         assignments: List[SliceAssignment] = []
-        total = 0.0
+        stage_times: List[float] = []
         feasible = True
         infeasible_nodes: List[str] = []
         for idx, (start, end, node) in enumerate(stages):
@@ -148,8 +163,9 @@ class PartitionBaselines:
                 estimated_comm_ms=comm,
                 working_set_mb=footprint.total_stage_memory_mb,
             ))
-            total += c + comm
+            stage_times.append(c + comm)
 
+        total = self.score_stage_times(stage_times)
         if not feasible:
             extra = f"memory-infeasible stage(s): {', '.join(infeasible_nodes)}"
             notes = f"{notes}; {extra}" if notes else extra
@@ -161,6 +177,11 @@ class PartitionBaselines:
             assignments=assignments,
             notes=notes,
         )
+
+    def score_stage_times(self, stage_times: Sequence[float]) -> float:
+        if self.objective == "microbatch":
+            return DynamicPartitioner.microbatch_makespan(list(stage_times), self.num_microbatches)
+        return float(sum(stage_times))
 
     @staticmethod
     def _stages_from_assignments(assignments: List[SliceAssignment]) -> List[Stage]:
@@ -300,7 +321,10 @@ class PartitionBaselines:
     def best_fixed_order(
         self, layers: List[LayerProfile], nodes: List[NodeMetrics], max_nodes: int = 8
     ) -> PartitionEvaluationResult:
-        """Fixed-order DP over every node ordering (K! runs); the cheapest feasible plan wins."""
+        """
+        Fixed-order DP over every node ordering (K! runs); the cheapest feasible plan under this
+        evaluator's objective wins. The fixed-order DP itself minimises the sum of stage times.
+        """
         K = len(nodes)
         if K > max_nodes:
             raise ValueError(f"best_fixed_order enumerates {K}! orderings; refusing for K > {max_nodes}")
@@ -327,14 +351,23 @@ class PartitionBaselines:
         )
         return best
 
-    def orchest_subset_dp(self, layers: List[LayerProfile], nodes: List[NodeMetrics]) -> PartitionEvaluationResult:
+    def subset_dp(
+        self, layers: List[LayerProfile], nodes: List[NodeMetrics], objective: str, name: str
+    ) -> PartitionEvaluationResult:
+        """Subset DP optimising `objective` ("sum", "bottleneck" or "microbatch"), scored by this evaluator."""
         try:
             assignments = self.partitioner.partition_subset_dp(
-                layers, nodes, self.rtt_matrix, self.bw_matrix, **self.cost_kwargs
+                layers, nodes, self.rtt_matrix, self.bw_matrix,
+                objective=objective, num_microbatches=self.num_microbatches, **self.cost_kwargs
             )
         except RuntimeError as e:
-            return self._infeasible("orchest_subset_dp", str(e))
-        return self.evaluate_plan("orchest_subset_dp", layers, self._stages_from_assignments(assignments))
+            return self._infeasible(name, str(e))
+        return self.evaluate_plan(name, layers, self._stages_from_assignments(assignments),
+                                  notes=f"solver objective={objective}")
+
+    def orchest_subset_dp(self, layers: List[LayerProfile], nodes: List[NodeMetrics]) -> PartitionEvaluationResult:
+        """Orchest's choice: the subset DP optimising this evaluator's own objective."""
+        return self.subset_dp(layers, nodes, self.objective, "orchest_subset_dp")
 
     # ------------------------------------------------------------------
     # Suite
@@ -349,6 +382,10 @@ class PartitionBaselines:
         results["best_single_node"] = self.best_single_node(layers, nodes)
         results["fixed_order"] = self.fixed_order(layers, nodes)
         results["best_fixed_order"] = self.best_fixed_order(layers, nodes)
+        if self.objective == "microbatch":
+            results["sum_optimal_subset_dp"] = self.subset_dp(layers, nodes, "sum", "sum_optimal_subset_dp")
+            results["bottleneck_optimal_subset_dp"] = self.subset_dp(
+                layers, nodes, "bottleneck", "bottleneck_optimal_subset_dp")
         results["orchest_subset_dp"] = self.orchest_subset_dp(layers, nodes)
         return results
 

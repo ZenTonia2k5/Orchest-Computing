@@ -740,6 +740,7 @@ class DynamicPartitioner:
         objective: str = "sum",
         max_subset_nodes: int = 12,
         calibration_params: Optional[Any] = None,
+        num_microbatches: int = 1,
     ) -> Tuple[List[SliceAssignment], float]:
         """
         Exact subset DP over node sets. Returns (assignments, optimal_objective_value).
@@ -776,6 +777,8 @@ class DynamicPartitioner:
         objective:
             "sum"        minimize sum of stage times -- single-request prefill TTFT.
             "bottleneck" minimize max stage time -- steady-state pipeline throughput.
+            "microbatch" minimize T_G = sum_s t_s + (G - 1) * max_s t_s for G =
+                         num_microbatches; see solve_microbatch_from_costs().
         Both decompose over the same per-stage quantity t_s = w_in(s) + c(s), i.e. the
         incoming transfer is charged to the downstream stage. That models the blocking
         recv-then-compute behaviour of the current transport; it is not valid for an
@@ -785,10 +788,12 @@ class DynamicPartitioner:
         cost-model evaluations -- the same number partition() makes. Exact for any K
         within max_subset_nodes.
         """
-        if objective not in ("sum", "bottleneck"):
+        if objective not in ("sum", "bottleneck", "microbatch"):
             raise ValueError(
-                f"objective must be 'sum' or 'bottleneck', got {objective!r}"
+                f"objective must be 'sum', 'bottleneck' or 'microbatch', got {objective!r}"
             )
+        if objective == "microbatch" and int(num_microbatches) < 1:
+            raise ValueError(f"num_microbatches must be >= 1, got {num_microbatches}")
 
         N = len(layers)
         K = len(nodes)
@@ -804,8 +809,6 @@ class DynamicPartitioner:
 
         rtt_matrix = rtt_matrix or {}
         bw_matrix = bw_matrix or {}
-        INF = float("inf")
-        use_sum = (objective == "sum")
 
         calib = calibration_params or self.calibration_params
         pref_weights, pref_flops = self._layer_prefix_sums(layers)
@@ -821,84 +824,16 @@ class DynamicPartitioner:
             prompt_len=prompt_len, calibration_params=calib, phase=phase,
         )
 
-        n_states = (1 << K) * K * N
-        dp = array("d", [INF]) * n_states
-        parent_v = array("i", [-1]) * n_states   # node index of the preceding stage
-        parent_i = array("i", [-1]) * n_states   # last layer of the preceding stage
+        if objective == "microbatch":
+            best_cost, raw_assignments, _ = self.solve_microbatch_from_costs(C, W, N, K, int(num_microbatches))
+        else:
+            best_cost, raw_assignments = self._subset_dp_core(C, W, N, K, use_sum=(objective == "sum"))
 
-        # Base case: node v alone covers layers 0..i
-        for v in range(K):
-            base = (((1 << v) * K) + v) * N
-            cv = v * N * N
-            for i in range(N):
-                cost = C[cv + i]          # a = 0, so the row offset is 0
-                if cost != INF:
-                    dp[base + i] = cost
-
-        # Forward relaxation. mask | (1 << u) is strictly greater than mask, so ascending
-        # mask order is a valid topological order over the state graph.
-        for mask in range(1, 1 << K):
-            for v in range(K):
-                if not (mask >> v) & 1:
-                    continue
-                vbase = ((mask * K) + v) * N
-                for i in range(N - 1):
-                    cur = dp[vbase + i]
-                    if cur == INF:
-                        continue
-                    wrow = (i * K + v) * K
-                    for u in range(K):
-                        if (mask >> u) & 1:
-                            continue
-                        link = W[wrow + u]
-                        ubase = (((mask | (1 << u)) * K) + u) * N
-                        crow = u * N * N + (i + 1) * N
-                        for j in range(i + 1, N):
-                            cost = C[crow + j]
-                            if cost == INF:
-                                break     # monotone in j: no longer segment fits either
-                            stage = link + cost
-                            cand = cur + stage if use_sum else (cur if cur > stage else stage)
-                            if cand < dp[ubase + j]:
-                                dp[ubase + j] = cand
-                                parent_v[ubase + j] = v
-                                parent_i[ubase + j] = i
-
-        # Answer: any subset, any final node, having consumed every layer
-        last = N - 1
-        best_cost = INF
-        best_mask = -1
-        best_v = -1
-        for mask in range(1, 1 << K):
-            for v in range(K):
-                if not (mask >> v) & 1:
-                    continue
-                cost = dp[((mask * K) + v) * N + last]
-                if cost < best_cost:
-                    best_cost = cost
-                    best_mask = mask
-                    best_v = v
-
-        if best_mask == -1:
+        if not raw_assignments:
             raise RuntimeError(
                 f"Dynamic Slicing impossible: no assignment of {N} layers over {K} nodes "
                 f"satisfies M_stage <= alpha * M_usable (alpha={alpha})."
             )
-
-        # Backtrack the optimal (segment, node) trace
-        raw_assignments: List[Tuple[int, int, int]] = []
-        mask, v, i = best_mask, best_v, last
-        while True:
-            idx = ((mask * K) + v) * N + i
-            pv = parent_v[idx]
-            pi = parent_i[idx]
-            start_l = 0 if pv == -1 else pi + 1
-            raw_assignments.append((start_l, i, v))
-            if pv == -1:
-                break
-            mask ^= (1 << v)
-            v, i = pv, pi
-        raw_assignments.reverse()
 
         assignments = []
         for pos, (start_l, end_l, node_idx) in enumerate(raw_assignments):
@@ -937,6 +872,215 @@ class DynamicPartitioner:
 
         return assignments, best_cost
 
+    # ------------------------------------------------------------------
+    # Subset DP core over precomputed costs (shared by all objectives)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _subset_dp_core(
+        C: Any,
+        W: Any,
+        N: int,
+        K: int,
+        use_sum: bool,
+        stage_cap: float = float("inf"),
+    ) -> Tuple[float, List[Tuple[int, int, int]]]:
+        """
+        Runs the subset DP on precomputed costs and returns (best value, raw plan) where the
+        raw plan is [(layer_start, layer_end, node_index), ...] ([] if infeasible).
+
+        C[v*N*N + a*N + b]   cost of layers a..b on node v (+inf if memory-infeasible)
+        W[(p*K + u)*K + v]   transfer of the activation after layer p from node u to node v
+
+        Stage time t_s = incoming transfer + compute. With `stage_cap`, every stage whose
+        t_s exceeds the cap is excluded, i.e. the DP solves min sum s.t. max_s t_s <= cap.
+        """
+        INF = float("inf")
+        n_states = (1 << K) * K * N
+        dp = array("d", [INF]) * n_states
+        parent_v = array("i", [-1]) * n_states   # node index of the preceding stage
+        parent_i = array("i", [-1]) * n_states   # last layer of the preceding stage
+
+        # Base case: node v alone covers layers 0..i
+        for v in range(K):
+            base = (((1 << v) * K) + v) * N
+            cv = v * N * N
+            for i in range(N):
+                cost = C[cv + i]          # a = 0, so the row offset is 0
+                if cost == INF or cost > stage_cap:
+                    break                 # monotone in i
+                dp[base + i] = cost
+
+        # Forward relaxation. mask | (1 << u) is strictly greater than mask, so ascending
+        # mask order is a valid topological order over the state graph.
+        for mask in range(1, 1 << K):
+            for v in range(K):
+                if not (mask >> v) & 1:
+                    continue
+                vbase = ((mask * K) + v) * N
+                for i in range(N - 1):
+                    cur = dp[vbase + i]
+                    if cur == INF:
+                        continue
+                    wrow = (i * K + v) * K
+                    for u in range(K):
+                        if (mask >> u) & 1:
+                            continue
+                        link = W[wrow + u]
+                        if link > stage_cap:
+                            continue
+                        ubase = (((mask | (1 << u)) * K) + u) * N
+                        crow = u * N * N + (i + 1) * N
+                        for j in range(i + 1, N):
+                            cost = C[crow + j]
+                            if cost == INF:
+                                break     # monotone in j: no longer segment fits either
+                            stage = link + cost
+                            if stage > stage_cap:
+                                break     # compute grows with the segment, so does t_s
+                            cand = cur + stage if use_sum else (cur if cur > stage else stage)
+                            if cand < dp[ubase + j]:
+                                dp[ubase + j] = cand
+                                parent_v[ubase + j] = v
+                                parent_i[ubase + j] = i
+
+        # Answer: any subset, any final node, having consumed every layer
+        last = N - 1
+        best_cost = INF
+        best_mask = -1
+        best_v = -1
+        for mask in range(1, 1 << K):
+            for v in range(K):
+                if not (mask >> v) & 1:
+                    continue
+                cost = dp[((mask * K) + v) * N + last]
+                if cost < best_cost:
+                    best_cost = cost
+                    best_mask = mask
+                    best_v = v
+
+        if best_mask == -1:
+            return INF, []
+
+        # Backtrack the optimal (segment, node) trace
+        raw_assignments: List[Tuple[int, int, int]] = []
+        mask, v, i = best_mask, best_v, last
+        while True:
+            idx = ((mask * K) + v) * N + i
+            pv = parent_v[idx]
+            pi = parent_i[idx]
+            start_l = 0 if pv == -1 else pi + 1
+            raw_assignments.append((start_l, i, v))
+            if pv == -1:
+                break
+            mask ^= (1 << v)
+            v, i = pv, pi
+        raw_assignments.reverse()
+        return best_cost, raw_assignments
+
+    @staticmethod
+    def stage_times_from_costs(
+        raw: List[Tuple[int, int, int]], C: Any, W: Any, N: int, K: int
+    ) -> List[float]:
+        """t_s = incoming transfer + compute for each stage of a raw plan."""
+        times = []
+        for pos, (a, b, v) in enumerate(raw):
+            link = W[((a - 1) * K + raw[pos - 1][2]) * K + v] if pos > 0 else 0.0
+            times.append(link + C[v * N * N + a * N + b])
+        return times
+
+    @staticmethod
+    def microbatch_makespan(stage_times: List[float], num_microbatches: int) -> float:
+        """
+        T_G = sum_s t_s + (G - 1) * max_s t_s.
+
+        Exact makespan of G identical, independent micro-batches through a linear pipeline
+        in which every stage is a single server that processes micro-batches in order with
+        deterministic service time t_s and unbounded buffers between stages (flow shop with
+        identical jobs). Not valid when micro-batches depend on each other, e.g. consecutive
+        chunks of one prompt whose attention needs the KV cache of earlier chunks.
+        """
+        if not stage_times:
+            return 0.0
+        G = max(int(num_microbatches), 1)
+        return sum(stage_times) + (G - 1) * max(stage_times)
+
+    @classmethod
+    def solve_microbatch_from_costs(
+        cls, C: Any, W: Any, N: int, K: int, num_microbatches: int
+    ) -> Tuple[float, List[Tuple[int, int, int]], Dict[str, Any]]:
+        """
+        Exact minimisation of T_G(P) = sum_s t_s(P) + (G - 1) * max_s t_s(P) over all plans of
+        the subset DP (ordered node subsets x contiguous cuts, each node at most once).
+
+        Threshold enumeration. For a cap tau let S(tau) = min { sum(P) : max(P) <= tau }, solved
+        by _subset_dp_core with stage_cap=tau. Let P* be optimal with m* = max(P*). At tau = m*
+        the capped DP returns P with sum(P) <= sum(P*) and max(P) <= m*, hence
+        T_G(P) <= T_G(P*): P is optimal too. m* is one of the finitely many achievable stage
+        times, so enumerating those candidates is exact.
+
+        Pruning keeps it cheap: tau below the bottleneck optimum is infeasible, and once
+        S_min + (G - 1) * tau >= best (S_min = unconstrained min sum) no larger tau can win.
+        Each candidate costs one subset DP run: O(2^K * K^2 * N^2).
+        """
+        INF = float("inf")
+        G = max(int(num_microbatches), 1)
+        info: Dict[str, Any] = {"num_microbatches": G, "dp_runs": 0, "candidates": 0}
+
+        sum_val, sum_raw = cls._subset_dp_core(C, W, N, K, use_sum=True)
+        info["dp_runs"] += 1
+        if not sum_raw:
+            return INF, [], info
+
+        def value(raw):
+            return cls.microbatch_makespan(cls.stage_times_from_costs(raw, C, W, N, K), G)
+
+        best_raw, best = sum_raw, value(sum_raw)
+        if G == 1:
+            info["solution_kind"] = "sum_optimal"
+            return best, best_raw, info
+
+        tau_lo, bot_raw = cls._subset_dp_core(C, W, N, K, use_sum=False)
+        info["dp_runs"] += 1
+        if value(bot_raw) < best:
+            best_raw, best = bot_raw, value(bot_raw)
+
+        # Every achievable stage time: first stage C[v,0,b], later stages W[a-1,u,v] + C[v,a,b]
+        cands = set()
+        for v in range(K):
+            base = v * N * N
+            for b in range(N):
+                c = C[base + b]
+                if c == INF:
+                    break
+                cands.add(c)
+            for a in range(1, N):
+                for b in range(a, N):
+                    c = C[base + a * N + b]
+                    if c == INF:
+                        break
+                    for u in range(K):
+                        if u != v:
+                            cands.add(W[((a - 1) * K + u) * K + v] + c)
+        ordered = sorted(t for t in cands if t >= tau_lo - 1e-12)
+        info["candidates"] = len(ordered)
+
+        for tau in ordered:
+            if sum_val + (G - 1) * tau >= best - 1e-12:
+                break
+            capped_sum, raw = cls._subset_dp_core(C, W, N, K, use_sum=True, stage_cap=tau)
+            info["dp_runs"] += 1
+            if not raw:
+                continue
+            v_raw = value(raw)
+            if v_raw < best - 1e-12:
+                best_raw, best = raw, v_raw
+
+        info["solution_kind"] = (
+            "sum_optimal" if best_raw == sum_raw else ("bottleneck_optimal" if best_raw == bot_raw else "threshold")
+        )
+        return best, best_raw, info
+
     def partition_subset_dp(
         self,
         layers: List[LayerProfile],
@@ -954,6 +1098,7 @@ class DynamicPartitioner:
         objective: str = "sum",
         max_subset_nodes: int = 12,
         calibration_params: Optional[Any] = None,
+        num_microbatches: int = 1,
     ) -> List[SliceAssignment]:
         """
         Drop-in replacement for partition() backed by the exact subset DP, so the node
@@ -980,6 +1125,7 @@ class DynamicPartitioner:
             alpha=alpha, objective=objective,
             max_subset_nodes=max_subset_nodes,
             calibration_params=effective_calib,
+            num_microbatches=num_microbatches,
         )
         return assignments
 
@@ -987,14 +1133,18 @@ class DynamicPartitioner:
     def plan_latency(
         assignments: List[SliceAssignment],
         objective: str = "sum",
+        num_microbatches: int = 1,
     ) -> float:
         """
         Scores a plan from its per-stage times t_s = compute + incoming comm:
-        "sum" for single-request TTFT, "bottleneck" for the pipeline's limiting stage.
+        "sum" for single-request TTFT, "bottleneck" for the pipeline's limiting stage,
+        "microbatch" for the makespan of G micro-batches (see microbatch_makespan).
         """
         if not assignments:
             return 0.0
         stage_times = [a.estimated_compute_ms + a.estimated_comm_ms for a in assignments]
+        if objective == "microbatch":
+            return DynamicPartitioner.microbatch_makespan(stage_times, num_microbatches)
         return sum(stage_times) if objective == "sum" else max(stage_times)
 
     def sweep_alpha_sensitivity(
