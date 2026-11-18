@@ -86,14 +86,27 @@ class PartitionBaselines:
     # Shared evaluator
     # ------------------------------------------------------------------
 
+    def _prefix(self, layers: List[LayerProfile]) -> Tuple[List[float], List[float]]:
+        """Prefix sums for `layers`, built once per layer list so segment queries are O(1)."""
+        cache = self.__dict__.setdefault("_prefix_cache", {})
+        hit = cache.get(id(layers))
+        if hit is None or hit[0] is not layers or len(hit[1]) != len(layers) + 1:
+            pw, pf = self.cost_calc.layer_prefix_sums(layers)
+            hit = (layers, pw, pf)
+            cache[id(layers)] = hit
+        return hit[1], hit[2]
+
     def _stage_compute_ms(self, layers: List[LayerProfile], start: int, end: int, node: NodeMetrics) -> float:
         kw = self.cost_kwargs
+        pw, pf = self._prefix(layers)
         return self.cost_calc.compute_time_ms(
             layers, start, end, node,
             phase=kw["phase"], prompt_len=kw["prompt_len"], max_seq_len=kw["max_seq_len"],
             batch_size=kw["batch_size"], concurrency=kw["concurrency"],
             runtime_reserve_mb=kw["runtime_reserve_mb"], alpha=kw["alpha"],
             calibration_params=kw["calibration_params"],
+            cached_weights_mb=pw[end + 1] - pw[start],
+            cached_linear_flops=pf[end + 1] - pf[start],
         )
 
     def _link_ms(self, layers: List[LayerProfile], cut_after: int, src: NodeMetrics, dst: NodeMetrics) -> float:

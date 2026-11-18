@@ -495,13 +495,16 @@ class PartitionCostCalculator:
         num_kv_heads: Optional[int] = None,
         intermediate_size: Optional[int] = None,
         apply_system_defaults: bool = False,
+        cached_weights_mb: Optional[float] = None,
     ) -> StageMemoryFootprint:
         """
         Calculates total stage memory footprint:
         M_stage = M_weights + M_kv_cache + M_transient + M_workspace + M_transport + M_runtime + M_allocator
+
+        O(1) in the segment length when `cached_weights_mb` (a prefix-sum difference) is given:
+        every other term depends only on the segment length and the first layer's shape.
         """
-        sub_layers = layers[start_idx : end_idx + 1]
-        n_sub = len(sub_layers)
+        start_idx, end_idx, n_sub = cls._segment_bounds(layers, start_idx, end_idx)
         n_total = total_layers or len(layers)
 
         if n_sub == 0:
@@ -522,14 +525,18 @@ class PartitionCostCalculator:
                 alpha=alpha,
             )
 
-        m_weights = sum(l.weight_memory_mb for l in sub_layers)
-        hidden_sz = sub_layers[0].output_shape[2] if (sub_layers and len(sub_layers[0].output_shape) > 2) else 2048
+        first = layers[start_idx]
+        m_weights = (
+            cached_weights_mb if cached_weights_mb is not None
+            else sum(layers[i].weight_memory_mb for i in range(start_idx, end_idx + 1))
+        )
+        hidden_sz = first.output_shape[2] if len(first.output_shape) > 2 else 2048
         seq_len = max_seq_len if max_seq_len is not None else min(prompt_len + 128, 2048)
 
-        layer_heads = num_heads or getattr(sub_layers[0], "num_heads", 16)
-        layer_kv_heads = num_kv_heads or getattr(sub_layers[0], "num_kv_heads", None)
-        layer_inter = intermediate_size or getattr(sub_layers[0], "intermediate_size", None) or (hidden_sz * 4)
-        dtype = getattr(sub_layers[0], "dtype_bytes", 2.0)
+        layer_heads = num_heads or getattr(first, "num_heads", 16)
+        layer_kv_heads = num_kv_heads or getattr(first, "num_kv_heads", None)
+        layer_inter = intermediate_size or getattr(first, "intermediate_size", None) or (hidden_sz * 4)
+        dtype = getattr(first, "dtype_bytes", 2.0)
 
         # Detect node device type
         node_dev = "cpu"
@@ -647,9 +654,9 @@ class PartitionCostCalculator:
         """
         Calculates execution time in milliseconds for the Prefill phase of layers [start_idx : end_idx] on a node.
         Includes both linear projection FLOPs and quadratic self-attention FLOPs (2 * N * B * H * S^2 * D).
+        O(1) in the segment length when `cached_linear_flops` (a prefix-sum difference) is given.
         """
-        sub_layers = layers[start_idx : end_idx + 1]
-        n_sub = len(sub_layers)
+        start_idx, end_idx, n_sub = cls._segment_bounds(layers, start_idx, end_idx)
         if n_sub == 0:
             return {
                 "compute_ms": 0.0,
@@ -669,11 +676,12 @@ class PartitionCostCalculator:
         if cached_linear_flops is not None:
             linear_flops = cached_linear_flops * s * b
         else:
-            linear_flops = sum(l.flops_per_token for l in sub_layers) * s * b
+            linear_flops = sum(layers[i].flops_per_token for i in range(start_idx, end_idx + 1)) * s * b
 
         # 2. Quadratic Attention FLOPs (QK^T and Softmax*V attention score computation)
-        layer_heads = num_heads or getattr(sub_layers[0], "num_heads", 16)
-        hidden_sz = sub_layers[0].output_shape[2] if (sub_layers and len(sub_layers[0].output_shape) > 2) else 2048
+        first = layers[start_idx]
+        layer_heads = num_heads or getattr(first, "num_heads", 16)
+        hidden_sz = first.output_shape[2] if len(first.output_shape) > 2 else 2048
         head_dim = hidden_sz // max(layer_heads, 1)
         attn_quadratic_flops = 2.0 * n_sub * b * layer_heads * (s ** 2) * head_dim
 
@@ -1146,6 +1154,27 @@ class PartitionCostCalculator:
         return profile.total_transient_mb
 
     @staticmethod
+    def _segment_bounds(layers: List[LayerProfile], start_idx: int, end_idx: int) -> Tuple[int, int, int]:
+        """Clamps [start_idx..end_idx] to the layer list like a slice would; returns (start, end, count)."""
+        n = len(layers)
+        start = max(int(start_idx), 0)
+        end = min(int(end_idx), n - 1)
+        return start, end, max(end - start + 1, 0)
+
+    @staticmethod
+    def layer_prefix_sums(layers: List[LayerProfile]) -> Tuple[List[float], List[float]]:
+        """
+        Prefix sums of weight MB and FLOPs/token: the weights (resp. FLOPs) of layers [a..b] are
+        W[b + 1] - W[a]. One O(L) pass that turns every segment query into O(1).
+        """
+        pw = [0.0] * (len(layers) + 1)
+        pf = [0.0] * (len(layers) + 1)
+        for i, layer in enumerate(layers):
+            pw[i + 1] = pw[i] + layer.weight_memory_mb
+            pf[i + 1] = pf[i] + layer.flops_per_token
+        return pw, pf
+
+    @staticmethod
     def _node_device_type(node: Any) -> str:
         """Device type a node computes on: its best accelerator, else "cpu"."""
         gpus = getattr(node, "gpus", None) or []
@@ -1329,9 +1358,11 @@ class PartitionCostCalculator:
         using the complete stage memory footprint model:
         M_stage = M_weights + M_kv_cache + M_transient + M_workspace + M_transport + M_runtime + M_allocator
         Returns float('inf') if Stage Memory Footprint exceeds alpha * usable memory.
+
+        O(1) in the segment length when both `cached_weights_mb` and `cached_linear_flops`
+        (prefix-sum differences) are given; otherwise the two sums cost O(end - start).
         """
-        sub_layers = layers[start_idx : end_idx + 1]
-        num_sub_layers = len(sub_layers)
+        start_idx, end_idx, num_sub_layers = cls._segment_bounds(layers, start_idx, end_idx)
         if num_sub_layers == 0:
             return 0.0
 
@@ -1350,6 +1381,7 @@ class PartitionCostCalculator:
             runtime_reserve_mb=runtime_reserve_mb,
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
+            cached_weights_mb=cached_weights_mb,
         )
 
         # Calibration may only tighten the memory constraint. A fitted gamma_memory < 1
@@ -1389,13 +1421,16 @@ class PartitionCostCalculator:
         else:
             # Decode phase: Memory-bandwidth bound + 1 token FLOPs
             mem_bw_gbs = 50.0 if node.gpus else 25.0
-            weight_mb = cached_weights_mb if cached_weights_mb is not None else sum(l.weight_memory_mb for l in sub_layers)
+            weight_mb = (
+                cached_weights_mb if cached_weights_mb is not None
+                else sum(layers[i].weight_memory_mb for i in range(start_idx, end_idx + 1))
+            )
             mem_read_sec = (weight_mb / 1024.0) / mem_bw_gbs
 
             if cached_linear_flops is not None:
                 total_flops_per_token = cached_linear_flops
             else:
-                total_flops_per_token = sum(l.flops_per_token for l in sub_layers)
+                total_flops_per_token = sum(layers[i].flops_per_token for i in range(start_idx, end_idx + 1))
             tflops_speed = cls.get_node_compute_speed(node)
             effective_flops = total_flops_per_token * max(batch_size, 1)
             compute_sec = mem_read_sec + ((effective_flops / 1e12) / tflops_speed)

@@ -623,13 +623,7 @@ class DynamicPartitioner:
     @staticmethod
     def _layer_prefix_sums(layers: List[LayerProfile]) -> Tuple[List[float], List[float]]:
         """Prefix sums of layer weights (MB) and FLOPs/token for O(1) interval queries."""
-        n = len(layers)
-        pref_weights = [0.0] * (n + 1)
-        pref_flops = [0.0] * (n + 1)
-        for idx, lyr in enumerate(layers):
-            pref_weights[idx + 1] = pref_weights[idx] + lyr.weight_memory_mb
-            pref_flops[idx + 1] = pref_flops[idx] + lyr.flops_per_token
-        return pref_weights, pref_flops
+        return PartitionCostCalculator.layer_prefix_sums(layers)
 
     def _precompute_stage_costs(
         self,
