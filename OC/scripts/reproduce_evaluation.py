@@ -159,7 +159,7 @@ def run_partition_experiments(calib_params: Any) -> Dict[str, Any]:
 
 
 def run_reproduction(
-    profile_path: str = "OC/hardware_profile.json",
+    profile_path: str = "OC/data/calibration_dataset_v1.json",
     output_json: str = "OC/evaluation_report.json",
     physical_path: Optional[str] = None,
 ):
@@ -346,7 +346,10 @@ def run_reproduction(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Reproduce Orchest cost model calibration and regret metrics.")
-    parser.add_argument("--profile", default="OC/hardware_profile.json", help="Path to input hardware profile JSON")
+    parser.add_argument(
+        "--profile", default="OC/data/calibration_dataset_v1.json",
+        help="Calibration dataset JSON (default: the frozen, versioned dataset; OC/hardware_profile.json is runtime state and not tracked)",
+    )
     parser.add_argument("--output", default="OC/evaluation_report.json", help="Path to export report JSON")
     parser.add_argument(
         "--physical-measurements",

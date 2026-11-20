@@ -524,16 +524,17 @@ def test_activation_comm_cost_and_staging():
     assert abs(comm_cost["total_comm_ms"] - 18.78) < 0.2
 
 
-def test_cost_model_calibration_and_heldout_isolation():
+def test_cost_model_calibration_and_heldout_isolation(tmp_path):
     """
     Verifies that calibration training data and evaluation data are properly split,
     and calibration reduces prediction error on unseen prompt lengths.
+    Reads the frozen dataset and writes the splits to a temporary directory, never into the repo.
     """
     import os
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    source_profile = os.path.join(base_dir, "hardware_profile.json")
-    calib_path = os.path.join(base_dir, "calibration_profile.json")
-    heldout_path = os.path.join(base_dir, "held_out_evaluation_results.json")
+    source_profile = os.path.join(base_dir, "data", "calibration_dataset_v1.json")
+    calib_path = str(tmp_path / "calibration_profile.json")
+    heldout_path = str(tmp_path / "held_out_evaluation_results.json")
 
     # 1. Run full calibration and isolation pipeline
     params, report = CostModelCalibrator.calibrate_and_isolate_profiles(

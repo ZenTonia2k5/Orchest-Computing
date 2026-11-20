@@ -43,7 +43,7 @@ def _multi_node_data():
 
 
 def test_legacy_profile_reproduces_published_numbers():
-    calib, held = CostModelCalibrator.split_calibration_and_heldout_data(os.path.join(OC_ROOT, "hardware_profile.json"))
+    calib, held = CostModelCalibrator.split_calibration_and_heldout_data(os.path.join(OC_ROOT, "data", "calibration_dataset_v1.json"))
     p = CostModelCalibrator.fit(calib)
     assert p.compute_scaling_factor == 0.688
     assert p.model_scaling_factors == {"Qwen2.5-0.5B": 0.688, "Qwen2.5-1.5B": 0.556}

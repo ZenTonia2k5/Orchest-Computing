@@ -97,3 +97,7 @@ OC/held_out_evaluation_results.json
 /models/
 !/OC/orchest/models/
 *.safetensors
+
+# Per-machine host node configuration (runtime)
+cluster_nodes_config.json
+OC/cluster_nodes_config.json
