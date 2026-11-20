@@ -58,7 +58,10 @@ def main():
     # Start FastAPI Uvicorn Server
     from apps.dashboard.server import app
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+        # LAN by default: worker dashboards relay chat/generation to the host's dashboard.
+        # Remote /api/* calls still need ORCHEST_DASHBOARD_TOKEN (orchest/network/dashboard_auth.py);
+        # set ORCHEST_DASHBOARD_HOST=127.0.0.1 to keep the dashboard on this machine only.
+        uvicorn.run(app, host=os.environ.get("ORCHEST_DASHBOARD_HOST", "0.0.0.0"), port=8000, log_level="info")
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

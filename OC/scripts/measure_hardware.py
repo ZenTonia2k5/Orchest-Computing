@@ -34,6 +34,7 @@ import torch  # noqa: E402
 
 from orchest.evaluation import hardware_bench as hb  # noqa: E402
 from orchest.models.cache_cleaner import get_app_models_dir  # noqa: E402
+from orchest.models.model_policy import check_model_allowed, trust_remote_code  # noqa: E402
 
 DEFAULT_PROMPTS = os.path.join(os.path.dirname(__file__), "data", "fidelity_prompts_100.json")
 
@@ -76,7 +77,7 @@ def cmd_fidelity(args, cfg, tokenizer, report):
     print(f"\n== Fidelity: plan '{plan.name}' vs single-node reference on {ref_device} ==")
     reference = AutoModelForCausalLM.from_pretrained(
         cfg["model"], cache_dir=get_app_models_dir(), torch_dtype=cfg["torch_dtype"],
-        trust_remote_code=True, low_cpu_mem_usage=True,
+        trust_remote_code=trust_remote_code(), low_cpu_mem_usage=True,
     ).to(ref_device).eval()
 
     # Local stages on the reference device reuse its weights (no second copy).
@@ -181,7 +182,8 @@ def main():
         cfg["total_layers"] = AutoConfig.from_pretrained(cfg["model"], cache_dir=get_app_models_dir()).num_hidden_layers
 
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(cfg["model"], cache_dir=get_app_models_dir(), trust_remote_code=True)
+    check_model_allowed(cfg["model"])
+    tokenizer = AutoTokenizer.from_pretrained(cfg["model"], cache_dir=get_app_models_dir(), trust_remote_code=trust_remote_code())
 
     report = {
         "title": "Orchest hardware measurements",

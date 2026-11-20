@@ -17,6 +17,7 @@ from ..models.auto_slicer import AutoModelSlicer, ModelSliceModule
 from .kv_cache import KVCacheSessionStore, KVCacheMismatchError, run_stage_with_cache
 from . import device_stats
 from ..models.cache_cleaner import cleanup_incomplete_downloads
+from ..models.model_policy import ModelNotAllowedError, check_model_allowed, is_model_allowed
 
 logger = logging.getLogger("WorkerNode")
 
@@ -280,6 +281,26 @@ class WorkerNode:
         self.connected_host_id = host_id
         self.connected_host_ip = host_ip
         self.connected_host_port = dashboard_port
+
+        if not is_model_allowed(model_name):
+            # Never download or execute a model this node has not allowed; the host sees
+            # the reason through STAGE_STATUS / forward errors.
+            try:
+                check_model_allowed(model_name)
+            except ModelNotAllowedError as e:
+                self.slice_module = None
+                self.last_load_error = f"ModelNotAllowedError: {e}"
+            self.status = "IDLE"
+            logger.warning(self.last_load_error)
+            self.record_history_log(
+                event_type="DISPATCH_REJECTED",
+                host_id=host_id,
+                host_ip=host_ip,
+                model_name=model_name,
+                details="Model not on this node's allowlist",
+                status="REJECTED",
+            )
+            return
 
         req_id = str(uuid.uuid4())[:8]
         req_obj = {

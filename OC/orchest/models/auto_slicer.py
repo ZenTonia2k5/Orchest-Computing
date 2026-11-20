@@ -10,6 +10,7 @@ from huggingface_hub import hf_hub_download
 import safetensors
 
 from .cache_cleaner import get_app_models_dir
+from .model_policy import check_model_allowed, trust_remote_code
 
 logger = logging.getLogger("AutoModelSlicer")
 
@@ -240,6 +241,7 @@ class AutoModelSlicer:
         Selectively downloads & loads ONLY the model weight shards required for layers [start_idx..end_idx].
         Prevents edge devices from downloading entire 15GB+ model repositories.
         """
+        check_model_allowed(model_name)
         if dtype is None:
             dtype = torch.float16 if device != "cpu" else torch.float32
 
@@ -289,8 +291,8 @@ class AutoModelSlicer:
                 downloaded_files.append(shard_path)
 
             # Initialize model architecture and load only needed tensors
-            config = AutoConfig.from_pretrained(model_name, cache_dir=models_cache_dir, trust_remote_code=True)
-            model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, torch_dtype=dtype)
+            config = AutoConfig.from_pretrained(model_name, cache_dir=models_cache_dir, trust_remote_code=trust_remote_code())
+            model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code(), torch_dtype=dtype)
             
             # Load the downloaded shard weights
             state_dict = {}
@@ -301,7 +303,7 @@ class AutoModelSlicer:
                             if is_param_needed(k):
                                 state_dict[k] = f.get_tensor(k).to(dtype)
                 elif fpath.endswith(".bin"):
-                    bin_data = torch.load(fpath, map_location="cpu")
+                    bin_data = torch.load(fpath, map_location="cpu", weights_only=True)
                     for k, v in bin_data.items():
                         if is_param_needed(k):
                             state_dict[k] = v.to(dtype)
@@ -317,7 +319,7 @@ class AutoModelSlicer:
             model_name,
             cache_dir=models_cache_dir,
             torch_dtype=dtype,
-            trust_remote_code=True,
+            trust_remote_code=trust_remote_code(),
             low_cpu_mem_usage=True,
         )
         return cls.create_slice(

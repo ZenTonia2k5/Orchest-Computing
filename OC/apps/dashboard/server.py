@@ -15,13 +15,15 @@ import requests
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response
+from fastapi import Request
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, JSONResponse
 from pydantic import BaseModel
 
 # Add root directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from orchest.executor.host import HostOrchestrator
+from orchest.network.dashboard_auth import TOKEN_HEADER, auth_headers, check_request
 from orchest.executor.worker import WorkerNode
 from orchest.executor.swarm_generator import SwarmAutoregressiveGenerator
 from orchest.models.cache_cleaner import (
@@ -36,6 +38,16 @@ from orchest.models.cache_cleaner import (
 setup_app_models_cache()
 
 app = FastAPI(title="Orchest Computing Universal Swarm MLOps Platform")
+
+
+@app.middleware("http")
+async def _require_token_for_remote_api(request: Request, call_next):
+    """Loopback requests pass; other machines need the shared token for /api/* (see dashboard_auth)."""
+    client_host = request.client.host if request.client else None
+    reason = check_request(client_host, request.url.path, request.headers.get(TOKEN_HEADER))
+    if reason is not None:
+        return JSONResponse(status_code=403, content={"detail": reason})
+    return await call_next(request)
 
 # Favicon handler to eliminate browser 404 console notices
 @app.get("/favicon.ico", include_in_schema=False)
@@ -464,7 +476,7 @@ def run_generation(req: GenerateRequest):
     if remote_host:
         try:
             url = f"http://{remote_host['host_ip']}:{remote_host['port']}/api/generate"
-            proxy_resp = requests.post(url, json=req.model_dump(), stream=True, timeout=60)
+            proxy_resp = requests.post(url, json=req.model_dump(), stream=True, headers=auth_headers(), timeout=60)
             def _proxy_gen_stream():
                 for line in proxy_resp.iter_lines():
                     if line:
@@ -509,7 +521,7 @@ def stop_generation(host_ip: Optional[str] = None):
     remote_host = get_remote_host_target(host_ip)
     if remote_host:
         try:
-            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/generate/stop", timeout=2.0)
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/generate/stop", headers=auth_headers(), timeout=2.0)
         except Exception:
             pass
         return {"status": "STOPPED", "message": "Inference generation was aborted on Host Master."}
@@ -528,7 +540,7 @@ def get_chat_messages(host_ip: Optional[str] = None):
     if remote_host:
         try:
             url = f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/messages"
-            r = requests.get(url, timeout=2.5)
+            r = requests.get(url, headers=auth_headers(), timeout=2.5)
             if r.status_code == 200:
                 return r.json()
         except Exception:
@@ -549,7 +561,7 @@ def send_chat_message(req: ChatSendRequest):
                 forward_payload["sender_name"] = f"Worker ({metrics.hostname or metrics.ip_address})"
                 forward_payload["sender_role"] = "worker"
 
-            proxy_resp = requests.post(url, json=forward_payload, stream=True, timeout=60)
+            proxy_resp = requests.post(url, json=forward_payload, stream=True, headers=auth_headers(), timeout=60)
             def _proxy_stream():
                 for line in proxy_resp.iter_lines():
                     if line:
@@ -632,7 +644,7 @@ def stop_chat(host_ip: Optional[str] = None):
     remote_host = get_remote_host_target(host_ip)
     if remote_host:
         try:
-            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/stop", timeout=2.0)
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/stop", headers=auth_headers(), timeout=2.0)
         except Exception:
             pass
         return {"status": "STOPPED", "message": "Chat stopped on Host Master."}
@@ -645,7 +657,7 @@ def clear_chat(host_ip: Optional[str] = None):
     remote_host = get_remote_host_target(host_ip)
     if remote_host:
         try:
-            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/clear", timeout=2.0)
+            requests.post(f"http://{remote_host['host_ip']}:{remote_host['port']}/api/chat/clear", headers=auth_headers(), timeout=2.0)
         except Exception:
             pass
     SWARM_CHAT_MESSAGES.clear()

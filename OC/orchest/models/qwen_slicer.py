@@ -4,6 +4,7 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoConfig
 from .auto_slicer import AutoModelSlicer, ModelSliceModule
 from .cache_cleaner import get_app_models_dir
+from .model_policy import check_model_allowed, trust_remote_code
 
 
 class QwenModelSlicer:
@@ -13,16 +14,17 @@ class QwenModelSlicer:
 
     @staticmethod
     def load_model_and_inspect(model_name_or_path: str, device: str = "cpu"):
+        check_model_allowed(model_name_or_path)
         cache_dir = get_app_models_dir()
-        config = AutoConfig.from_pretrained(model_name_or_path, cache_dir=cache_dir, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(model_name_or_path, cache_dir=cache_dir, trust_remote_code=trust_remote_code())
         model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
             cache_dir=cache_dir,
             torch_dtype=torch.float16 if device != "cpu" else torch.float32,
-            trust_remote_code=True,
+            trust_remote_code=trust_remote_code(),
             low_cpu_mem_usage=True,
         )
-        layers, embed, norm, head = AutoModelSlicer.get_transformer_layers(model)
+        layers, embed, norm, head, _rotary = AutoModelSlicer.get_transformer_layers(model)
         
         hidden_size = getattr(config, "hidden_size", 2048)
         intermediate_size = getattr(config, "intermediate_size", 5632)

@@ -7,6 +7,7 @@ import torch
 from transformers import AutoTokenizer
 
 from ..models.cache_cleaner import get_app_models_dir
+from ..models.model_policy import check_model_allowed, trust_remote_code
 from .pipeline import SwarmPipelineExecutor
 
 logger = logging.getLogger("SwarmGenerator")
@@ -76,8 +77,9 @@ class SwarmAutoregressiveGenerator:
         if self.tokenizer is None:
             try:
                 logger.info(f"Loading tokenizer for {model_name} (cache: {models_cache_dir})...")
+                check_model_allowed(model_name)
                 self.tokenizer = AutoTokenizer.from_pretrained(
-                    model_name, cache_dir=models_cache_dir, trust_remote_code=True
+                    model_name, cache_dir=models_cache_dir, trust_remote_code=trust_remote_code()
                 )
                 self.loaded_model_name = model_name
             except Exception as e:

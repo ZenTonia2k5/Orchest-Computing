@@ -321,17 +321,33 @@ def list_installed_models(include_system_cache: bool = True) -> List[Dict[str, A
     return models
 
 
+def _is_strictly_inside(path: str, roots: List[str]) -> bool:
+    """
+    True when `path` lies below one of `roots` (not equal to it). Compares whole path
+    components, so a sibling such as ".../hub2" is not "inside" ".../hub" the way a plain
+    string prefix check would treat it. Paths should already be realpath()-resolved.
+    """
+    norm = os.path.normcase(path)
+    for root in roots:
+        r = os.path.normcase(root)
+        try:
+            if norm != r and os.path.commonpath([norm, r]) == r:
+                return True
+        except ValueError:  # different drives on Windows
+            continue
+    return False
+
+
 def delete_installed_model(model_path: str) -> Dict[str, Any]:
     """Safely removes an installed model directory."""
     if not os.path.exists(model_path):
         return {"status": "ERROR", "message": "Model path not found"}
 
-    norm_path = os.path.abspath(model_path)
-    allowed_roots = [os.path.abspath(d) for d in _get_cache_dirs_to_clean()]
-    allowed_roots.append(os.path.abspath(os.path.expanduser("~/.cache/huggingface/hub")))
+    norm_path = os.path.realpath(model_path)
+    allowed_roots = [os.path.realpath(d) for d in _get_cache_dirs_to_clean()]
+    allowed_roots.append(os.path.realpath(os.path.expanduser("~/.cache/huggingface/hub")))
 
-    is_allowed = any(norm_path.startswith(root) and norm_path != root for root in allowed_roots)
-    if not is_allowed:
+    if not _is_strictly_inside(norm_path, allowed_roots):
         return {"status": "ERROR", "message": "Path is outside allowed model cache directories"}
 
     sz = _get_dir_size(norm_path)

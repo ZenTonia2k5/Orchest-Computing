@@ -864,7 +864,8 @@ class PartitionCostCalculator:
             # 1. Try online / local HF cache AutoConfig
             try:
                 from transformers import AutoConfig
-                cfg_obj = AutoConfig.from_pretrained(config_or_model, trust_remote_code=True)
+                from ..models.model_policy import trust_remote_code
+                cfg_obj = AutoConfig.from_pretrained(config_or_model, trust_remote_code=trust_remote_code())
             except Exception as e:
                 logger.debug(f"AutoConfig.from_pretrained failed for '{config_or_model}': {e}. Falling back to catalog.")
                 # 2. Check offline catalog

@@ -78,7 +78,7 @@ def test_list_installed_models_temp_dir(monkeypatch):
 
 
 def test_api_installed_models_endpoint():
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 50000))  # local UI: remote callers need a token
     resp = client.get("/api/models/installed")
     assert resp.status_code == 200
     data = resp.json()
