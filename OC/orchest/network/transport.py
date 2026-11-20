@@ -5,7 +5,7 @@ import threading
 import time
 import os
 import ssl
-from typing import Callable, Optional, Dict, Any, Tuple
+from typing import Callable, Optional, Dict, Any, Tuple, List
 from concurrent import futures
 
 import torch
@@ -118,6 +118,15 @@ def _read_tls_material(role: str, component: str) -> Optional[Tuple[bytes, bytes
 # ==============================================================================
 
 class RawTCPTransportServer:
+    """
+    Raw TCP (+ mTLS) server. Each connection carries any number of framed request/response
+    exchanges, so clients keep one connection per peer instead of paying a TCP + TLS handshake
+    per message. The TLS handshake runs in the connection's own thread, never in the accept loop.
+    """
+
+    IDLE_TIMEOUT_S = 300.0  # an idle connection is closed after this long
+    IO_TIMEOUT_S = 60.0     # max wait for the rest of a message once its header arrived
+
     def __init__(self, host: str = "0.0.0.0", port: int = 5555, secret_key: Optional[bytes] = None):
         self.host = host
         self.port = port
@@ -129,6 +138,8 @@ class RawTCPTransportServer:
             Callable[[MessageType, Dict[str, Any], Optional[torch.Tensor]], None]
         ] = None
         self.ssl_context: Optional[ssl.SSLContext] = None
+        self._conns: set = set()
+        self._conns_lock = threading.Lock()
 
     def start(self):
         if self._running and self._server_sock is not None:
@@ -159,14 +170,9 @@ class RawTCPTransportServer:
                     self._server_sock.settimeout(1.0)
                     try:
                         conn, addr = self._server_sock.accept()
-                        if self.ssl_context:
-                            conn = self.ssl_context.wrap_socket(conn, server_side=True)
-                    except (socket.timeout, ssl.SSLError):
+                    except socket.timeout:
                         continue
-                    client_thread = threading.Thread(
-                        target=self._handle_client, args=(conn, addr), daemon=True
-                    )
-                    client_thread.start()
+                    threading.Thread(target=self._handle_client, args=(conn, addr), daemon=True).start()
                 except Exception:
                     break
 
@@ -174,40 +180,18 @@ class RawTCPTransportServer:
         self._thread.start()
 
     def _recv_exact(self, conn: socket.socket, num_bytes: int) -> bytes:
-        data = bytearray()
-        while len(data) < num_bytes:
-            try:
-                chunk = conn.recv(min(num_bytes - len(data), 65536))
-                if not chunk:
-                    break
-                data.extend(chunk)
-            except Exception:
-                break
-        return bytes(data)
+        return _recv_exact(conn, num_bytes)
 
-    def _handle_client(self, conn: socket.socket, addr: Tuple[str, int]):
+    def _dispatch(self, raw_full: bytes) -> bytes:
+        """Runs the callback for one request and returns the framed response."""
         try:
-            conn.settimeout(10.0)
-            header_head = self._recv_exact(conn, TensorPacket.HEADER_SIZE)
-            if len(header_head) < TensorPacket.HEADER_SIZE:
-                return
-
-            magic, msg_type_code, header_len, tensor_len, body_crc32 = struct.unpack(
-                TensorPacket.HEADER_STRUCT, header_head
-            )
-            if magic != TensorPacket.MAGIC:
-                return
-
-            total_body_len = header_len + tensor_len
-            raw_body = self._recv_exact(conn, total_body_len)
-            if len(raw_body) < total_body_len:
-                return
-
-            raw_full = header_head + raw_body
             msg_type, meta, tensor = TensorPacket.unpack(raw_full, secret_key=self.secret_key)
+        except Exception as e:
+            return TensorPacket.pack(MessageType.ACK, {"status": "ERROR", "error": f"Bad packet: {e}"})
 
-            resp_tensor = None
-            resp_meta = {"status": "OK"}
+        resp_tensor = None
+        resp_meta = {"status": "OK"}
+        try:
             if self.on_tensor_received_cb:
                 cb_out = self.on_tensor_received_cb(msg_type, meta, tensor)
                 if isinstance(cb_out, torch.Tensor):
@@ -216,17 +200,54 @@ class RawTCPTransportServer:
                     if isinstance(cb_out[0], dict):
                         resp_meta.update(cb_out[0])
                     resp_tensor = cb_out[1]
+        except Exception as e:
+            logger.error(f"RawTCP handler failed for {msg_type}: {e}")
+            return TensorPacket.pack(MessageType.ACK, {"status": "ERROR", "error": f"Handler failed: {e}"})
 
-            if resp_tensor is not None:
-                resp_pkt = TensorPacket.pack(
-                    MessageType.FORWARD_TENSOR, resp_meta, tensor=resp_tensor, secret_key=self.secret_key
+        if resp_tensor is not None:
+            return TensorPacket.pack(
+                MessageType.FORWARD_TENSOR, resp_meta, tensor=resp_tensor, secret_key=self.secret_key
+            )
+        return TensorPacket.pack(MessageType.ACK, resp_meta)
+
+    def _handle_client(self, conn: socket.socket, addr: Tuple[str, int]):
+        try:
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if self.ssl_context:
+                conn.settimeout(self.IO_TIMEOUT_S)
+                try:
+                    conn = self.ssl_context.wrap_socket(conn, server_side=True)
+                except (ssl.SSLError, OSError) as e:
+                    logger.warning(f"TLS handshake with {addr[0]} rejected: {e}")
+                    return
+            with self._conns_lock:
+                self._conns.add(conn)
+
+            while self._running:
+                conn.settimeout(self.IDLE_TIMEOUT_S)
+                header_head = _recv_exact(conn, TensorPacket.HEADER_SIZE)
+                if len(header_head) < TensorPacket.HEADER_SIZE:
+                    return  # peer closed (or idle timeout)
+
+                magic, msg_type_code, header_len, tensor_len, body_crc32 = struct.unpack(
+                    TensorPacket.HEADER_STRUCT, header_head
                 )
-            else:
-                resp_pkt = TensorPacket.pack(MessageType.ACK, resp_meta)
-            conn.sendall(resp_pkt)
-        except Exception:
-            pass
+                if magic != TensorPacket.MAGIC:
+                    logger.warning(f"Dropping connection from {addr[0]}: bad magic")
+                    return
+
+                conn.settimeout(self.IO_TIMEOUT_S)
+                total_body_len = header_len + tensor_len
+                raw_body = _recv_exact(conn, total_body_len)
+                if len(raw_body) < total_body_len:
+                    return
+
+                conn.sendall(self._dispatch(header_head + raw_body))
+        except Exception as e:
+            logger.debug(f"RawTCP connection from {addr[0]} ended: {e}")
         finally:
+            with self._conns_lock:
+                self._conns.discard(conn)
             try:
                 conn.close()
             except Exception:
@@ -240,12 +261,149 @@ class RawTCPTransportServer:
             except Exception:
                 pass
             self._server_sock = None
+        with self._conns_lock:
+            conns, self._conns = list(self._conns), set()
+        for c in conns:
+            try:
+                c.close()
+            except Exception:
+                pass
         if self._thread and self._thread.is_alive():
             try:
                 self._thread.join(timeout=1.0)
             except Exception:
                 pass
             self._thread = None
+
+
+def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes:
+    """
+    Reads exactly num_bytes unless the peer closes or a timeout/error ends the read early
+    (then returns what arrived). Receives straight into one preallocated buffer: TLS hands
+    data over in ~16 KB records, and growing a bytearray per record dominated large transfers.
+    """
+    buf = bytearray(num_bytes)
+    view = memoryview(buf)
+    got = 0
+    while got < num_bytes:
+        try:
+            n = sock.recv_into(view[got:], num_bytes - got)
+        except socket.timeout:
+            # A timeout is not a closed connection: callers must not mistake it for a
+            # stale socket and resend (the peer may still be working on the request).
+            view.release()
+            raise
+        except OSError:
+            break
+        if n == 0:
+            break
+        got += n
+    view.release()
+    if got < num_bytes:
+        del buf[got:]
+    return bytes(buf)
+
+
+class _ConnectionPool:
+    """
+    Keeps idle client connections per (ip, port) so consecutive messages to a peer reuse one
+    TCP + TLS session. A connection is used by one request at a time; concurrent requests to
+    the same peer get their own connection.
+    """
+
+    IDLE_TTL_S = 240.0  # below the server's idle timeout, so a pooled connection is rarely stale
+
+    def __init__(self):
+        self._idle: Dict[Tuple[str, int], List[Tuple[socket.socket, float]]] = {}
+        self._lock = threading.Lock()
+        self.opened = 0  # connections created (for tests and diagnostics)
+
+    def acquire(self, ip: str, port: int, timeout: float) -> Tuple[socket.socket, bool]:
+        now = time.monotonic()
+        with self._lock:
+            idle = self._idle.get((ip, port), [])
+            while idle:
+                sock, last = idle.pop()
+                if now - last < self.IDLE_TTL_S:
+                    return sock, True
+                _close_quietly(sock)
+        # Resolve the TLS context before touching the network: missing certificates must fail
+        # closed immediately (InsecureTransportError), not after a connect attempt.
+        context = _build_tls_context("worker", ssl.Purpose.SERVER_AUTH, "RawTCP client")
+        sock = socket.create_connection((ip, port), timeout=timeout)
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if context is not None:
+                sock = context.wrap_socket(sock, server_hostname="host_master")
+        except BaseException:
+            _close_quietly(sock)
+            raise
+        with self._lock:
+            self.opened += 1
+        return sock, False
+
+    def release(self, ip: str, port: int, sock: socket.socket) -> None:
+        with self._lock:
+            self._idle.setdefault((ip, port), []).append((sock, time.monotonic()))
+
+    def close_all(self) -> None:
+        with self._lock:
+            idle, self._idle = self._idle, {}
+        for entries in idle.values():
+            for sock, _ in entries:
+                _close_quietly(sock)
+
+
+def _close_quietly(sock: socket.socket) -> None:
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
+_POOL = _ConnectionPool()
+
+
+def _request(
+    target_ip: str,
+    target_port: int,
+    packet_bytes: bytes,
+    timeout: float,
+) -> bytes:
+    """
+    Sends one framed request on a pooled connection and returns the framed response.
+
+    A pooled connection may have been closed by the peer while idle (restart, idle timeout).
+    That shows up as an error or EOF before any response byte; only then is the request sent
+    once more on a fresh connection. A timeout is never retried. If the peer did process the
+    first copy, a KV-cached stage rejects the repeat (past_len mismatch) instead of computing
+    it twice.
+    """
+    for attempt in (0, 1):
+        sock, reused = _POOL.acquire(target_ip, target_port, timeout)
+        got_response_bytes = False
+        try:
+            sock.settimeout(timeout)
+            sock.sendall(packet_bytes)
+            header = _recv_exact(sock, TensorPacket.HEADER_SIZE)
+            got_response_bytes = len(header) > 0
+            if len(header) < TensorPacket.HEADER_SIZE:
+                raise ConnectionError("connection closed before a complete response header")
+            _, _, header_len, tensor_len, _ = struct.unpack(TensorPacket.HEADER_STRUCT, header)
+            body = _recv_exact(sock, header_len + tensor_len)
+            if len(body) < header_len + tensor_len:
+                raise ConnectionError("connection closed before the complete response body")
+        except socket.timeout:
+            _close_quietly(sock)
+            raise
+        except (OSError, ConnectionError, ssl.SSLError):
+            _close_quietly(sock)
+            if reused and attempt == 0 and not got_response_bytes:
+                continue  # stale pooled connection: try once on a fresh one
+            raise
+        _POOL.release(target_ip, target_port, sock)
+        return header + body
+    raise ConnectionError("unreachable")
 
 
 class RawTCPTransportClient:
@@ -259,21 +417,15 @@ class RawTCPTransportClient:
         secret_key: Optional[bytes] = None,
         timeout: float = 5.0,
     ) -> bool:
+        """Sends a message and waits for the peer's acknowledgement; True if one arrived."""
         packet_bytes = TensorPacket.pack(msg_type, meta, tensor, secret_key=secret_key)
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-
-            # Wrap client socket with mTLS (raises InsecureTransportError instead of downgrading)
-            s = _wrap_client_socket(s)
-
-            s.connect((target_ip, target_port))
-            s.sendall(packet_bytes)
-
-            ack = s.recv(1024)
-            s.close()
-            return len(ack) > 0
-        except Exception:
+            _request(target_ip, target_port, packet_bytes, timeout)
+            return True
+        except InsecureTransportError:
+            raise
+        except Exception as e:
+            logger.debug(f"send_packet to {target_ip}:{target_port} failed: {e}")
             return False
 
     @classmethod
@@ -290,29 +442,7 @@ class RawTCPTransportClient:
     ) -> Tuple[bool, Dict[str, Any], Optional[torch.Tensor]]:
         packet_bytes = TensorPacket.pack(msg_type, meta, tensor, secret_key=secret_key)
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-
-            # Wrap client socket with mTLS (raises InsecureTransportError instead of downgrading)
-            s = _wrap_client_socket(s)
-
-            s.connect((target_ip, target_port))
-            s.sendall(packet_bytes)
-
-            header_head = cls._recv_exact_sock(s, TensorPacket.HEADER_SIZE)
-            if len(header_head) < TensorPacket.HEADER_SIZE:
-                s.close()
-                return False, {"error": "Incomplete header received"}, None
-
-            magic, msg_type_code, header_len, tensor_len, body_crc32 = struct.unpack(
-                TensorPacket.HEADER_STRUCT, header_head
-            )
-            raw_body = cls._recv_exact_sock(s, header_len + tensor_len)
-            s.close()
-            if len(raw_body) < header_len + tensor_len:
-                return False, {"error": "Incomplete body received"}, None
-
-            raw_full = header_head + raw_body
+            raw_full = _request(target_ip, target_port, packet_bytes, timeout)
             res_msg_type, res_meta, res_tensor = TensorPacket.unpack(
                 raw_full, secret_key=secret_key, device=device
             )
@@ -323,16 +453,12 @@ class RawTCPTransportClient:
 
     @staticmethod
     def _recv_exact_sock(s: socket.socket, num_bytes: int) -> bytes:
-        data = bytearray()
-        while len(data) < num_bytes:
-            try:
-                chunk = s.recv(min(num_bytes - len(data), 65536))
-                if not chunk:
-                    break
-                data.extend(chunk)
-            except Exception:
-                break
-        return bytes(data)
+        return _recv_exact(s, num_bytes)
+
+    @staticmethod
+    def close_all_connections() -> None:
+        """Closes every pooled connection (shutdown, tests)."""
+        _POOL.close_all()
 
 
 # ==============================================================================
@@ -616,6 +742,11 @@ class TensorTransportClient:
     """
     Unified Client wrapper dispatching messages using raw_tcp, zmq, or grpc channels.
     """
+
+    @staticmethod
+    def close_all_connections() -> None:
+        """Closes every pooled raw-TCP connection (shutdown, tests)."""
+        _POOL.close_all()
     @staticmethod
     def send_packet(
         target_ip: str,
