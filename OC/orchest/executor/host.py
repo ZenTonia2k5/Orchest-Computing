@@ -13,6 +13,9 @@ from ..profiler.node_profiler import NodeProfiler, NodeMetrics
 from ..profiler.model_profiler import ModelProfiler, LayerProfile
 from ..profiler.network_profiler import NetworkProfiler
 from ..partitioner.dynamic_programming import DynamicPartitioner, SliceAssignment
+from ..partitioner.cost_matrix import PartitionCostCalculator
+from ..partitioner.baselines import PartitionBaselines
+from ..partitioner.planning_config import PlanningConfig, load_calibration
 from ..network.discovery import UDPDiscoveryService, NodeBeacon
 from ..executor.pipeline import SwarmPipelineExecutor
 from ..executor.fault_tolerance import FaultToleranceMonitor
@@ -35,15 +38,24 @@ class HostOrchestrator:
         config_path: str = "cluster_nodes_config.json",
         transport: str = "raw_tcp",
         allowlist: Optional[List[str]] = None,
+        planning_config: Optional[PlanningConfig] = None,
     ):
         self.node_id = node_id or "host_master"
+        # Runtime assumptions the planner serves, and the calibration fitted for it
+        self.planning_config = planning_config or PlanningConfig.load()
+        self.calibration_params = None
+        try:
+            self.calibration_params = load_calibration(self.planning_config.calibration_dataset)
+        except Exception as e:
+            logger.warning(f"Calibration could not be fitted ({e}); planning uncalibrated.")
+        self.current_plan_info: Dict[str, Any] = {}
         self.secret_key = secret_key
         self.config_path = config_path
         self.transport_type = transport
         self.allowlist = allowlist or []
         self.discovery_service = UDPDiscoveryService(port=discovery_port)
         self.fault_monitor = FaultToleranceMonitor(heartbeat_timeout_sec=8.0)
-        self.partitioner = DynamicPartitioner()
+        self.partitioner = DynamicPartitioner(calibration_params=self.calibration_params)
 
         self.worker_nodes: Dict[str, NodeMetrics] = {}
         self.worker_ports: Dict[str, int] = {}
@@ -249,20 +261,41 @@ class HostOrchestrator:
     def plan_model_slicing(
         self,
         model_name: str,
-        num_layers: int = 28,
-        hidden_size: int = 2048,
-        intermediate_size: int = 5632,
-        num_heads: int = 16,
+        num_layers: Optional[int] = None,
+        hidden_size: Optional[int] = None,
+        intermediate_size: Optional[int] = None,
+        num_heads: Optional[int] = None,
         num_kv_heads: Optional[int] = None,
         partition_mode: str = "auto",
         custom_ratios: Optional[List[float]] = None,
-        alpha: float = 0.90,
+        alpha: Optional[float] = None,
         dtype_bytes: Optional[float] = None,
+        prompt_len: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        max_new_tokens: Optional[int] = None,
+        concurrency: Optional[int] = None,
+        objective: Optional[str] = None,
+        num_microbatches: Optional[int] = None,
     ) -> List[SliceAssignment]:
         """
-        Runs Dynamic Programming partition algorithm or Ratio Cutting over discovered LAN nodes.
-        Enforces GQA-aware KV-cache modeling and configurable memory safety ceiling alpha.
+        Partitions the model over the enabled cluster nodes with the planner the evaluation
+        describes, under the host's PlanningConfig (per-call arguments override it):
+
+            partition_mode "auto"         subset DP: node assignment and cuts optimised together
+                           "fixed_order"  contiguous DP in discovery order (baseline / comparison)
+                           "ratio"        operator ratios; refused when a stage breaches memory
+
+        Every mode uses the full stage-memory model (KV cache for the configured context and
+        concurrency) and the fitted calibration. Architecture values not given are read from
+        the model's config.
         """
+        cfg = self.planning_config.updated(
+            prompt_len=prompt_len, max_seq_len=max_seq_len, max_new_tokens=max_new_tokens,
+            concurrency=concurrency, objective=objective, num_microbatches=num_microbatches, alpha=alpha,
+        )
+        if partition_mode not in ("auto", "fixed_order", "ratio"):
+            raise ValueError(f"partition_mode must be 'auto', 'fixed_order' or 'ratio', got {partition_mode!r}")
+
         cluster_nodes = self.get_cluster_topology(include_disabled=False, include_self=True)
         if not cluster_nodes:
             # Fallback: profile self as local host node
@@ -272,6 +305,14 @@ class HostOrchestrator:
             setattr(local_node, "alias", "Host Master (Local)")
             setattr(local_node, "enabled", True)
             cluster_nodes = [local_node]
+
+        if None in (num_layers, hidden_size, intermediate_size, num_heads):
+            spec = PartitionCostCalculator.extract_model_config(model_name)
+            num_layers = num_layers or spec.num_layers
+            hidden_size = hidden_size or spec.hidden_size
+            intermediate_size = intermediate_size or spec.intermediate_size
+            num_heads = num_heads or spec.num_attention_heads
+            num_kv_heads = num_kv_heads or spec.num_kv_heads
 
         if dtype_bytes is None:
             dtype_bytes = 0.5 if any(s in model_name for s in ["14B", "20B", "27b", "32B"]) else 2.0
@@ -286,8 +327,6 @@ class HostOrchestrator:
             dtype_bytes=dtype_bytes,
         )
 
-        ratios = custom_ratios if (partition_mode == "ratio" and custom_ratios) else None
-
         # Build dynamic link matrices from observed network ping and bandwidth
         rtt_matrix = {}
         bw_matrix = {}
@@ -299,21 +338,70 @@ class HostOrchestrator:
                     rtt_matrix[(src.node_id, dst.node_id)] = link_rtt
                     bw_matrix[(src.node_id, dst.node_id)] = link_bw
 
-        logger.info(f"Running Partitioning (mode={partition_mode}, alpha={alpha}, ratios={ratios}) across {len(cluster_nodes)} enabled nodes...")
-        slice_plan = self.partitioner.partition(
-            layers=layers,
-            nodes=cluster_nodes,
-            rtt_matrix=rtt_matrix,
-            bw_matrix=bw_matrix,
-            ratios=ratios,
-            alpha=alpha,
+        calib = self.calibration_params
+        cost_kwargs = dict(
+            prompt_len=cfg.prompt_len,
+            max_seq_len=cfg.effective_max_seq_len(),
+            batch_size=cfg.batch_size,
+            concurrency=cfg.concurrency,
+            phase=cfg.phase,
+            alpha=cfg.alpha,
+            calibration_params=calib,
         )
+        logger.info(
+            f"Running Partitioning (mode={partition_mode}, objective={cfg.objective}, prompt_len={cfg.prompt_len}, "
+            f"max_seq_len={cfg.effective_max_seq_len()}, concurrency={cfg.concurrency}, alpha={cfg.alpha}, "
+            f"calibrated={calib is not None}) across {len(cluster_nodes)} enabled nodes..."
+        )
+
+        evaluator = PartitionBaselines(
+            partitioner=self.partitioner, rtt_matrix=rtt_matrix, bw_matrix=bw_matrix,
+            objective="microbatch" if cfg.objective == "microbatch" else "sum",
+            num_microbatches=cfg.num_microbatches, **cost_kwargs,
+        )
+
+        if partition_mode == "ratio":
+            if not custom_ratios:
+                raise ValueError("partition_mode 'ratio' needs custom_ratios")
+            slice_plan = self.partitioner.partition_by_ratio(
+                layers, cluster_nodes, custom_ratios, rtt_matrix, bw_matrix, **cost_kwargs
+            )
+            check = evaluator.evaluate_plan("ratio", layers, PartitionBaselines._stages_from_assignments(slice_plan))
+            if not check.is_feasible:
+                raise RuntimeError(f"Ratio plan rejected: {check.notes}")
+        elif partition_mode == "fixed_order":
+            slice_plan = self.partitioner.partition(layers, cluster_nodes, rtt_matrix, bw_matrix, **cost_kwargs)
+        else:
+            slice_plan = self.partitioner.partition_subset_dp(
+                layers, cluster_nodes, rtt_matrix, bw_matrix,
+                objective=cfg.objective, num_microbatches=cfg.num_microbatches,
+                max_subset_nodes=cfg.max_subset_nodes, **cost_kwargs,
+            )
+
+        scored = evaluator.evaluate_plan(partition_mode, layers, PartitionBaselines._stages_from_assignments(slice_plan))
         self.current_slice_plan = slice_plan
         self.active_model_name = model_name
+        self.current_plan_info = {
+            "model_name": model_name,
+            "partition_mode": partition_mode,
+            "solver": {"auto": "subset_dp", "fixed_order": "fixed_order_dp", "ratio": "ratio"}[partition_mode],
+            "planning_config": cfg.to_dict(),
+            "architecture": {
+                "num_layers": num_layers, "hidden_size": hidden_size, "intermediate_size": intermediate_size,
+                "num_heads": num_heads, "num_kv_heads": num_kv_heads, "dtype_bytes": dtype_bytes,
+            },
+            "calibrated": calib is not None,
+            "calibration_semantics": (calib.metadata.get("reference_semantics") if calib is not None else None),
+            "calibration_source": (calib.metadata.get("source_dataset") if calib is not None else None),
+            "predicted_objective_ms": scored.total_estimated_latency_ms,
+            "objective_scored": evaluator.objective,
+            "nodes_used": [a.node.node_id for a in slice_plan],
+        }
 
         for idx, assign in enumerate(slice_plan):
             logger.info(
-                f"Stage {idx}: Node {assign.node.node_id} ({getattr(assign.node, 'alias', assign.node.node_id)}) -> Layers [{assign.layer_start}..{assign.layer_end}] ({assign.layers_count} layers) | Compute: {assign.estimated_compute_ms}ms"
+                f"Stage {idx}: Node {assign.node.node_id} -> Layers [{assign.layer_start}..{assign.layer_end}] "
+                f"({assign.layers_count} layers) | Compute: {assign.estimated_compute_ms}ms | Mem: {assign.working_set_mb}MB"
             )
 
         return slice_plan

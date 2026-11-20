@@ -180,6 +180,18 @@ class SwarmAutoregressiveGenerator:
             device = next(self.pipeline_executor.stage_modules[0].parameters()).device
         curr_ids = input_ids.to(device)
 
+        # The plan reserved KV-cache memory for a fixed context; running past it could OOM a
+        # stage the planner declared feasible, so refuse instead of silently exceeding it.
+        planned_ctx = (getattr(self.host, "current_plan_info", None) or {}).get(
+            "planning_config", {}
+        ).get("effective_max_seq_len")
+        if planned_ctx is not None and input_ids.shape[1] + max_new_tokens > planned_ctx:
+            raise RuntimeError(
+                f"Request needs {input_ids.shape[1]} prompt + {max_new_tokens} new tokens, but the deployed "
+                f"plan reserved KV-cache memory for {planned_ctx} tokens. Re-plan with a larger "
+                f"prompt_len / max_new_tokens or lower max_tokens."
+            )
+
         eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
         prev_decoded_len = len(self.tokenizer.decode(curr_ids[0], skip_special_tokens=True))
 

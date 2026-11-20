@@ -996,6 +996,18 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await res.json();
 
+            if (!res.ok) {
+                // Planner refused (e.g. a ratio plan that breaches memory): show why, deploy nothing
+                showToast({
+                    type: 'warn',
+                    icon: '⚠️',
+                    title: 'Không thể phân mảnh mô hình',
+                    message: escapeHtml(String(data.detail || res.statusText)),
+                    duration: 10000
+                });
+                return;
+            }
+
             if (data.slice_plan) {
                 currentSlicePlan = data.slice_plan || [];
                 if (showAnimation) {

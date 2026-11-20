@@ -101,8 +101,15 @@ class PartitionRequest(BaseModel):
     num_kv_heads: Optional[int] = None
     partition_mode: str = "auto"
     custom_ratios: Optional[List[float]] = None
-    alpha: Optional[float] = 0.90
+    alpha: Optional[float] = None
     dtype_bytes: Optional[float] = None
+    # Workload the plan must serve; None -> the host's PlanningConfig
+    prompt_len: Optional[int] = None
+    max_seq_len: Optional[int] = None
+    max_new_tokens: Optional[int] = None
+    concurrency: Optional[int] = None
+    objective: Optional[str] = None
+    num_microbatches: Optional[int] = None
 
 
 class GenerateRequest(BaseModel):
@@ -415,27 +422,38 @@ def trigger_partition(req: PartitionRequest):
     intermediate_size = req.intermediate_size or cfg["intermediate_size"]
     num_heads = req.num_heads or cfg.get("num_heads", 16)
     num_kv_heads = req.num_kv_heads or cfg.get("num_kv_heads", None)
-    alpha = req.alpha if req.alpha is not None else 0.90
 
-    slice_plan = host_orchestrator.plan_model_slicing(
-        model_name=req.model_name,
-        num_layers=num_layers,
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        partition_mode=req.partition_mode,
-        custom_ratios=req.custom_ratios,
-        alpha=alpha,
-        dtype_bytes=req.dtype_bytes,
-    )
+    try:
+        slice_plan = host_orchestrator.plan_model_slicing(
+            model_name=req.model_name,
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            partition_mode=req.partition_mode,
+            custom_ratios=req.custom_ratios,
+            alpha=req.alpha,
+            dtype_bytes=req.dtype_bytes,
+            prompt_len=req.prompt_len,
+            max_seq_len=req.max_seq_len,
+            max_new_tokens=req.max_new_tokens,
+            concurrency=req.concurrency,
+            objective=req.objective,
+            num_microbatches=req.num_microbatches,
+        )
+    except (ValueError, RuntimeError) as e:
+        # Infeasible plans (memory) and invalid settings are reported, never deployed
+        raise HTTPException(status_code=400, detail=str(e))
     host_orchestrator.deploy_slice_plan()
+    info = host_orchestrator.current_plan_info
     return {
         "status": "SUCCESS",
         "model_name": req.model_name,
         "num_layers": num_layers,
         "partition_mode": req.partition_mode,
-        "alpha": alpha,
+        "alpha": info.get("planning_config", {}).get("alpha"),
+        "plan_info": info,
         "slice_plan": [s.to_dict() for s in slice_plan],
     }
 
